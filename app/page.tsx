@@ -1,25 +1,45 @@
 "use client";
 
 import {
-  AlarmClock, ArrowRight, Calculator, ChevronDown, ChevronUp,
+  AlarmClock, ArrowRight, BadgeDollarSign, Calculator, ChevronDown, ChevronUp,
   CircleDollarSign, Clock3, Copy, Grip, Hammer, Home, Maximize2,
-  Pause, Play, Plus, RefreshCcw, Ruler, Square, Trash2,
-  TrendingUp, Wrench,
+  Pause, Play, Plus, RefreshCcw, Ruler, Search, SlidersHorizontal, Square, TableProperties,
+  Trash2, TrendingUp, Wrench, MapPinned, CalendarClock, ReceiptText,
 } from "lucide-react";
 import {
-  PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState,
+  CommandDialog, CommandEmpty, CommandGroup, CommandInput,
+  CommandItem, CommandList, CommandShortcut,
+} from "@/components/ui/command";
+import {
+  Fragment, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState,
 } from "react";
 
-type ToolId = "clock" | "wages" | "market" | "gla" | "convert";
+type ToolId = "clock" | "wages" | "market" | "gla" | "convert" | "grid" | "fee" | "mileage" | "turnaround" | "quote";
 type TimeRow = { day: string; start: string; end: string; breakMinutes: number };
 type AreaRow = { id: number; label: string; length: number; width: number; count: number };
+type GridProperty = {
+  gla: number; siteAcres: number; age: number; beds: number;
+  fullBaths: number; halfBaths: number; garage: number; condition: string;
+};
+type GridComp = GridProperty & { id: number; label: string; salePrice: number };
+type GridRates = {
+  gla: number; siteAcres: number; age: number; beds: number;
+  baths: number; garage: number; condition: number;
+};
+type AdjustmentKey = keyof GridRates;
+type NumericGridKey = Exclude<keyof GridProperty, "condition">;
 
 const TOOLS = [
-  { id: "clock" as const, label: "Time Clock", short: "Clock", icon: Clock3 },
-  { id: "wages" as const, label: "Wage Calculator", short: "Wages", icon: CircleDollarSign },
-  { id: "market" as const, label: "Market Adjustment", short: "Market", icon: TrendingUp },
-  { id: "gla" as const, label: "GLA Worksheet", short: "GLA", icon: Ruler },
-  { id: "convert" as const, label: "Property Converter", short: "Convert", icon: Calculator },
+  { id: "clock" as const, label: "Time Clock", short: "Clock", icon: Clock3, description: "Track a live work session and earnings" },
+  { id: "wages" as const, label: "Wage Calculator", short: "Wages", icon: CircleDollarSign, description: "Total weekly hours, overtime, and gross pay" },
+  { id: "market" as const, label: "Market Adjustment", short: "Market", icon: TrendingUp, description: "Calculate a supported time adjustment" },
+  { id: "gla" as const, label: "GLA Worksheet", short: "GLA", icon: Ruler, description: "Build rectangular areas and total GLA" },
+  { id: "convert" as const, label: "Property Converter", short: "Convert", icon: Calculator, description: "Convert land, distance, and price per square foot" },
+  { id: "grid" as const, label: "Comp Adjustment Grid", short: "Comp Grid", icon: TableProperties, description: "Run side-by-side comparable adjustments" },
+  { id: "fee" as const, label: "Assignment Fee IQ", short: "Fee IQ", icon: BadgeDollarSign, description: "Measure assignment profit and quote the right fee" },
+  { id: "mileage" as const, label: "Trip Cost Calculator", short: "Trip Cost", icon: MapPinned, description: "Price fuel, vehicle wear, tolls, and travel time" },
+  { id: "turnaround" as const, label: "Turnaround Planner", short: "Turnaround", icon: CalendarClock, description: "Calculate a delivery date in business days" },
+  { id: "quote" as const, label: "Appraisal Fee Builder", short: "Fee Builder", icon: ReceiptText, description: "Build a defensible assignment quote" },
 ];
 
 const DEFAULT_TIMES: TimeRow[] = [
@@ -36,6 +56,22 @@ const DEFAULT_AREAS: AreaRow[] = [
   { id: 1, label: "Main level", length: 40, width: 28, count: 1 },
   { id: 2, label: "Upper level", length: 32, width: 28, count: 1 },
 ];
+
+const DEFAULT_SUBJECT: GridProperty = {
+  gla: 2200, siteAcres: 1, age: 20, beds: 3,
+  fullBaths: 2, halfBaths: 1, garage: 2, condition: "C3",
+};
+
+const DEFAULT_COMPS: GridComp[] = [
+  { id: 1, label: "Comp 1", salePrice: 365000, gla: 2050, siteAcres: .8, age: 25, beds: 3, fullBaths: 2, halfBaths: 0, garage: 2, condition: "C3" },
+  { id: 2, label: "Comp 2", salePrice: 389000, gla: 2325, siteAcres: 1.2, age: 16, beds: 4, fullBaths: 2, halfBaths: 1, garage: 2, condition: "C3" },
+  { id: 3, label: "Comp 3", salePrice: 350000, gla: 1980, siteAcres: .65, age: 30, beds: 3, fullBaths: 1, halfBaths: 1, garage: 1, condition: "C4" },
+];
+
+const DEFAULT_RATES: GridRates = {
+  gla: 75, siteAcres: 10000, age: 500, beds: 10000,
+  baths: 15000, garage: 12000, condition: 25000,
+};
 
 const money = new Intl.NumberFormat("en-US", {
   style: "currency", currency: "USD", maximumFractionDigits: 2,
@@ -69,6 +105,31 @@ function daysBetween(first: string, second: string) {
     ? 0 : Math.round((b.valueOf() - a.valueOf()) / 86_400_000);
 }
 
+function conditionScore(condition: string) {
+  const rating = Number(condition.replace(/\D/g, ""));
+  return Number.isFinite(rating) && rating >= 1 && rating <= 6 ? 7 - rating : 0;
+}
+
+function signedMoney(value: number) {
+  if (Math.abs(value) < .005) return "$0";
+  return `${value > 0 ? "+" : "−"}${money.format(Math.abs(value))}`;
+}
+
+function getAdjustments(subject: GridProperty, comp: GridComp, rates: GridRates) {
+  const adjustments: Record<AdjustmentKey, number> = {
+    gla: (subject.gla - comp.gla) * rates.gla,
+    siteAcres: (subject.siteAcres - comp.siteAcres) * rates.siteAcres,
+    age: (comp.age - subject.age) * rates.age,
+    beds: (subject.beds - comp.beds) * rates.beds,
+    baths: ((subject.fullBaths + subject.halfBaths * .5) - (comp.fullBaths + comp.halfBaths * .5)) * rates.baths,
+    garage: (subject.garage - comp.garage) * rates.garage,
+    condition: (conditionScore(subject.condition) - conditionScore(comp.condition)) * rates.condition,
+  };
+  const total = Object.values(adjustments).reduce((sum, value) => sum + value, 0);
+  const gross = Object.values(adjustments).reduce((sum, value) => sum + Math.abs(value), 0);
+  return { adjustments, total, gross, adjustedPrice: comp.salePrice + total };
+}
+
 function NumberField({ label, value, onChange, prefix, suffix, step = "any", min }: {
   label: string; value: number | string; onChange: (value: number) => void;
   prefix?: string; suffix?: string; step?: string; min?: number;
@@ -92,6 +153,31 @@ function ResultStat({ label, value, tone }: {
   return <div className={`result-stat ${tone ? `result-${tone}` : ""}`}>
     <span>{label}</span><strong>{value}</strong>
   </div>;
+}
+
+function CommandCenter({ open, setOpen, onSelect }: {
+  open: boolean; setOpen: (open: boolean) => void; onSelect: (tool: ToolId) => void;
+}) {
+  return <CommandDialog open={open} onOpenChange={setOpen}
+    title="MyToolPage command center" description="Search for a tool and open it instantly."
+    className="command-dialog">
+    <CommandInput placeholder="Search every tool…" autoFocus />
+    <CommandList>
+      <CommandEmpty>No matching tool.</CommandEmpty>
+      <CommandGroup heading="Open a tool">
+        {TOOLS.map((tool, index) => {
+          const Icon = tool.icon;
+          return <CommandItem key={tool.id} value={`${tool.label} ${tool.description}`}
+            onSelect={() => { onSelect(tool.id); setOpen(false); }}>
+            <span className="command-item-icon"><Icon size={18} /></span>
+            <span><strong>{tool.label}</strong><small>{tool.description}</small></span>
+            <CommandShortcut>0{index + 1}</CommandShortcut>
+          </CommandItem>;
+        })}
+      </CommandGroup>
+    </CommandList>
+    <div className="command-hint"><span><kbd>↑</kbd><kbd>↓</kbd> move</span><span><kbd>Enter</kbd> open</span><span><kbd>Esc</kbd> close</span></div>
+  </CommandDialog>;
 }
 
 function FloatingToolStrip({ activeTool, onSelect }: {
@@ -368,27 +454,252 @@ function ConvertTool() {
   </section>;
 }
 
+function CompGridTool() {
+  const [subject, setSubject] = useState(DEFAULT_SUBJECT);
+  const [comps, setComps] = useState(DEFAULT_COMPS);
+  const [rates, setRates] = useState(DEFAULT_RATES);
+  const [copied, setCopied] = useState(false);
+  const results = useMemo(() => comps.map((comp) => getAdjustments(subject, comp, rates)), [subject, comps, rates]);
+  const updateSubject = (key: keyof GridProperty, value: number | string) =>
+    setSubject((current) => ({ ...current, [key]: value }));
+  const updateComp = (id: number, key: keyof GridComp, value: number | string) =>
+    setComps((current) => current.map((comp) => comp.id === id ? { ...comp, [key]: value } : comp));
+  const adjustmentClass = (value: number) => value > 0 ? "positive" : value < 0 ? "negative" : "zero";
+  const addComp = () => {
+    const id = Math.max(0, ...comps.map((comp) => comp.id)) + 1;
+    setComps((current) => [...current, {
+      ...DEFAULT_SUBJECT, id, label: `Comp ${current.length + 1}`,
+      salePrice: 350000,
+    }]);
+  };
+  const copySummary = async () => {
+    const text = comps.map((comp, index) => {
+      const result = results[index];
+      const netPercent = comp.salePrice ? result.total / comp.salePrice * 100 : 0;
+      const grossPercent = comp.salePrice ? result.gross / comp.salePrice * 100 : 0;
+      return `${comp.label}: ${money.format(comp.salePrice)} sale | ${signedMoney(result.total)} net (${netPercent.toFixed(1)}%) | ${grossPercent.toFixed(1)}% gross | ${money.format(result.adjustedPrice)} adjusted`;
+    }).join("\n");
+    try { await navigator.clipboard.writeText(text); setCopied(true); window.setTimeout(() => setCopied(false), 1800); }
+    catch { setCopied(false); }
+  };
+  const numericRow = (label: string, key: NumericGridKey, adjustmentKey: AdjustmentKey, step = "1") =>
+    <tr key={key}>
+      <th>{label}</th>
+      <td><input aria-label={`Subject ${label}`} type="number" step={step} value={subject[key]}
+        onChange={(event) => updateSubject(key, Number(event.target.value))} /></td>
+      {comps.map((comp, index) => <Fragment key={`${key}-${comp.id}`}>
+        <td><input aria-label={`${comp.label} ${label}`} type="number" step={step} value={comp[key]}
+          onChange={(event) => updateComp(comp.id, key, Number(event.target.value))} /></td>
+        <td className={`adjustment-cell ${adjustmentClass(results[index].adjustments[adjustmentKey])}`}>{signedMoney(results[index].adjustments[adjustmentKey])}</td>
+      </Fragment>)}
+    </tr>;
+
+  return <section className="tool-card wide-card comp-grid-tool">
+    <div className="tool-heading heading-with-action">
+      <div className="heading-group"><div className="tool-icon blue"><TableProperties size={24} /></div>
+        <div><p className="eyebrow">Appraisal workbench</p><h1>Comp Adjustment Grid</h1></div></div>
+      <div className="heading-actions">
+        <button type="button" className="quiet-button" onClick={copySummary}><Copy size={16} />{copied ? "Copied" : "Copy results"}</button>
+        <button type="button" className="secondary-button" onClick={addComp}><Plus size={17} />Add comp</button>
+      </div>
+    </div>
+
+    <div className="rate-panel">
+      <div className="rate-panel-title"><SlidersHorizontal size={18} /><div><strong>Supported adjustment rates</strong><span>Change the rates before relying on the grid.</span></div></div>
+      <div className="rate-grid">
+        <NumberField label="GLA" value={rates.gla} onChange={(value) => setRates((current) => ({ ...current, gla: value }))} prefix="$" suffix="/sf" step="5" />
+        <NumberField label="Site" value={rates.siteAcres} onChange={(value) => setRates((current) => ({ ...current, siteAcres: value }))} prefix="$" suffix="/ac" step="1000" />
+        <NumberField label="Effective age" value={rates.age} onChange={(value) => setRates((current) => ({ ...current, age: value }))} prefix="$" suffix="/yr" step="100" />
+        <NumberField label="Bedroom" value={rates.beds} onChange={(value) => setRates((current) => ({ ...current, beds: value }))} prefix="$" step="1000" />
+        <NumberField label="Full-bath equivalent" value={rates.baths} onChange={(value) => setRates((current) => ({ ...current, baths: value }))} prefix="$" step="1000" />
+        <NumberField label="Garage stall" value={rates.garage} onChange={(value) => setRates((current) => ({ ...current, garage: value }))} prefix="$" step="1000" />
+        <NumberField label="Condition step" value={rates.condition} onChange={(value) => setRates((current) => ({ ...current, condition: value }))} prefix="$" step="1000" />
+      </div>
+    </div>
+
+    <div className="adjustment-table-wrap">
+      <table className="adjustment-table">
+        <thead>
+          <tr><th rowSpan={2}>Line item</th><th rowSpan={2}>Subject</th>
+            {comps.map((comp) => <th key={comp.id} colSpan={2}>
+              <span className="comp-title-cell"><input aria-label="Comparable label" value={comp.label}
+                onChange={(event) => updateComp(comp.id, "label", event.target.value)} />
+                {comps.length > 1 && <button type="button" aria-label={`Remove ${comp.label}`}
+                  onClick={() => setComps((current) => current.filter((item) => item.id !== comp.id))}><Trash2 size={15} /></button>}</span>
+            </th>)}
+          </tr>
+          <tr>{comps.map((comp) => <Fragment key={`subhead-${comp.id}`}><th>Comparable</th><th>Adjustment</th></Fragment>)}</tr>
+        </thead>
+        <tbody>
+          <tr><th>Sale price</th><td className="subject-dash">—</td>{comps.map((comp) => <Fragment key={`price-${comp.id}`}>
+            <td><input aria-label={`${comp.label} sale price`} type="number" step="1000" value={comp.salePrice}
+              onChange={(event) => updateComp(comp.id, "salePrice", Number(event.target.value))} /></td><td className="subject-dash">—</td>
+          </Fragment>)}</tr>
+          {numericRow("GLA (sf)", "gla", "gla")}
+          {numericRow("Site (ac)", "siteAcres", "siteAcres", ".01")}
+          {numericRow("Effective age", "age", "age")}
+          {numericRow("Bedrooms", "beds", "beds")}
+          <tr><th>Bathrooms</th>
+            <td><span className="bath-cell"><input aria-label="Subject full bathrooms" type="number" step="1" value={subject.fullBaths} onChange={(event) => updateSubject("fullBaths", Number(event.target.value))} /><small>F</small><input aria-label="Subject half bathrooms" type="number" step="1" value={subject.halfBaths} onChange={(event) => updateSubject("halfBaths", Number(event.target.value))} /><small>H</small></span></td>
+            {comps.map((comp, index) => <Fragment key={`bath-${comp.id}`}>
+              <td><span className="bath-cell"><input aria-label={`${comp.label} full bathrooms`} type="number" step="1" value={comp.fullBaths} onChange={(event) => updateComp(comp.id, "fullBaths", Number(event.target.value))} /><small>F</small><input aria-label={`${comp.label} half bathrooms`} type="number" step="1" value={comp.halfBaths} onChange={(event) => updateComp(comp.id, "halfBaths", Number(event.target.value))} /><small>H</small></span></td>
+              <td className={`adjustment-cell ${adjustmentClass(results[index].adjustments.baths)}`}>{signedMoney(results[index].adjustments.baths)}</td>
+            </Fragment>)}
+          </tr>
+          {numericRow("Garage stalls", "garage", "garage")}
+          <tr><th>Condition</th><td><select aria-label="Subject condition" value={subject.condition} onChange={(event) => updateSubject("condition", event.target.value)}>{[1,2,3,4,5,6].map((rating) => <option key={rating}>C{rating}</option>)}</select></td>
+            {comps.map((comp, index) => <Fragment key={`condition-${comp.id}`}><td><select aria-label={`${comp.label} condition`} value={comp.condition} onChange={(event) => updateComp(comp.id, "condition", event.target.value)}>{[1,2,3,4,5,6].map((rating) => <option key={rating}>C{rating}</option>)}</select></td><td className={`adjustment-cell ${adjustmentClass(results[index].adjustments.condition)}`}>{signedMoney(results[index].adjustments.condition)}</td></Fragment>)}
+          </tr>
+          <tr className="total-row"><th>Net adjustment</th><td>—</td>{comps.map((comp, index) => <Fragment key={`net-${comp.id}`}><td>{comp.salePrice ? `${(results[index].total / comp.salePrice * 100).toFixed(1)}%` : "—"}</td><td className={`adjustment-cell ${adjustmentClass(results[index].total)}`}>{signedMoney(results[index].total)}</td></Fragment>)}</tr>
+          <tr className="total-row"><th>Gross adjustment</th><td>—</td>{comps.map((comp, index) => <Fragment key={`gross-${comp.id}`}><td colSpan={2}>{comp.salePrice ? `${(results[index].gross / comp.salePrice * 100).toFixed(1)}%` : "—"}</td></Fragment>)}</tr>
+          <tr className="adjusted-row"><th>Adjusted price</th><td>—</td>{comps.map((comp, index) => <Fragment key={`adjusted-${comp.id}`}><td colSpan={2}>{money.format(results[index].adjustedPrice)}</td></Fragment>)}</tr>
+        </tbody>
+      </table>
+    </div>
+    <p className="professional-note"><Hammer size={16} />Calculation aid only. Support each adjustment from market evidence and reconcile the indications using appraisal judgment.</p>
+  </section>;
+}
+
+function FeeIqTool() {
+  const [values, setValues] = useState({
+    fee: 650, roundTripMiles: 55, driveHours: 1.25, inspectionHours: .75,
+    reportHours: 2.5, adminHours: .5, mileageCost: .7, otherCosts: 25, targetRate: 125,
+  });
+  const [copied, setCopied] = useState(false);
+  const update = (key: keyof typeof values, value: number) => setValues((current) => ({ ...current, [key]: value }));
+  const totalHours = values.driveHours + values.inspectionHours + values.reportHours + values.adminHours;
+  const vehicleCost = values.roundTripMiles * values.mileageCost;
+  const totalCosts = vehicleCost + values.otherCosts;
+  const contribution = values.fee - totalCosts;
+  const effectiveRate = totalHours > 0 ? contribution / totalHours : 0;
+  const targetFee = totalHours * values.targetRate + totalCosts;
+  const suggestedFee = Math.ceil(Math.max(0, targetFee) / 25) * 25;
+  const ratio = values.targetRate > 0 ? effectiveRate / values.targetRate : 0;
+  const decision = ratio >= 1.2
+    ? { label: "Strong fit", detail: "The assignment clears your target with room for surprises.", tone: "strong" }
+    : ratio >= 1
+      ? { label: "Acceptable", detail: "The assignment meets your current hourly target.", tone: "good" }
+      : ratio >= .8
+        ? { label: "Renegotiate", detail: `Quote at least ${money.format(suggestedFee)} to reach your target.`, tone: "reprice" }
+        : { label: "Pass or reprice", detail: `The current fee misses your target by ${money.format(Math.max(0, targetFee - values.fee))}.`, tone: "pass" };
+  const copyDecision = async () => {
+    const text = `Assignment Fee IQ: ${decision.label} | Fee ${money.format(values.fee)} | ${totalHours.toFixed(2)} total hours | ${money.format(totalCosts)} direct cost | ${money.format(effectiveRate)}/hr effective | Suggested fee ${money.format(suggestedFee)}`;
+    try { await navigator.clipboard.writeText(text); setCopied(true); window.setTimeout(() => setCopied(false), 1800); }
+    catch { setCopied(false); }
+  };
+
+  return <section className="tool-card wide-card fee-iq-tool">
+    <div className="tool-heading heading-with-action">
+      <div className="heading-group"><div className="tool-icon orange"><BadgeDollarSign size={24} /></div>
+        <div><p className="eyebrow">Business intelligence</p><h1>Assignment Fee IQ</h1></div></div>
+      <button type="button" className="quiet-button" onClick={copyDecision}><Copy size={16} />{copied ? "Copied" : "Copy decision"}</button>
+    </div>
+    <div className="fee-iq-layout">
+      <div className="fee-input-panel">
+        <h2>Assignment inputs</h2>
+        <div className="fee-field-grid">
+          <NumberField label="Quoted fee" value={values.fee} onChange={(value) => update("fee", value)} prefix="$" step="25" min={0} />
+          <NumberField label="Round-trip mileage" value={values.roundTripMiles} onChange={(value) => update("roundTripMiles", value)} suffix="mi" step="1" min={0} />
+          <NumberField label="Drive time" value={values.driveHours} onChange={(value) => update("driveHours", value)} suffix="hrs" step=".25" min={0} />
+          <NumberField label="Inspection time" value={values.inspectionHours} onChange={(value) => update("inspectionHours", value)} suffix="hrs" step=".25" min={0} />
+          <NumberField label="Research & report" value={values.reportHours} onChange={(value) => update("reportHours", value)} suffix="hrs" step=".25" min={0} />
+          <NumberField label="Admin & revisions" value={values.adminHours} onChange={(value) => update("adminHours", value)} suffix="hrs" step=".25" min={0} />
+          <NumberField label="Vehicle cost" value={values.mileageCost} onChange={(value) => update("mileageCost", value)} prefix="$" suffix="/mi" step=".01" min={0} />
+          <NumberField label="Other direct costs" value={values.otherCosts} onChange={(value) => update("otherCosts", value)} prefix="$" step="5" min={0} />
+          <NumberField label="Target productive rate" value={values.targetRate} onChange={(value) => update("targetRate", value)} prefix="$" suffix="/hr" step="5" min={0} />
+        </div>
+      </div>
+      <aside className={`fee-decision decision-${decision.tone}`}>
+        <span className="decision-kicker">Fee verdict</span><strong>{decision.label}</strong><p>{decision.detail}</p>
+        <div className="decision-score"><span>Target coverage</span><b>{Math.max(0, ratio * 100).toFixed(0)}%</b></div>
+        <div className="score-track"><span style={{ width: `${Math.min(100, Math.max(0, ratio * 100))}%` }} /></div>
+      </aside>
+    </div>
+    <div className="result-row fee-results" aria-live="polite">
+      <ResultStat label="Total assignment time" value={`${totalHours.toFixed(2)} hrs`} />
+      <ResultStat label="Direct assignment costs" value={money.format(totalCosts)} />
+      <ResultStat label="Effective hourly return" value={`${money.format(effectiveRate)}/hr`} tone="orange" />
+      <ResultStat label="Target fee" value={money.format(targetFee)} tone="blue" />
+      <ResultStat label="Quote in $25 steps" value={money.format(suggestedFee)} tone="blue" />
+    </div>
+    <div className="fee-breakdown"><span>Vehicle cost <strong>{money.format(vehicleCost)}</strong></span><span>Fee after direct costs <strong>{money.format(contribution)}</strong></span><span>Gap to target <strong>{money.format(Math.max(0, targetFee - values.fee))}</strong></span></div>
+    <p className="professional-note"><CircleDollarSign size={16} />Profitability screen before taxes and general overhead. Change the target and cost assumptions to match your business.</p>
+  </section>;
+}
+
+function MileageTool() {
+  const [miles, setMiles] = useState(120), [mpg, setMpg] = useState(19), [gas, setGas] = useState(3.65), [wear, setWear] = useState(.35), [tolls, setTolls] = useState(8), [hours, setHours] = useState(3), [hourly, setHourly] = useState(75);
+  const fuel = mpg > 0 ? miles / mpg * gas : 0;
+  const wearCost = miles * wear;
+  const timeCost = hours * hourly;
+  const total = fuel + wearCost + tolls + timeCost;
+  return <section className="tool-card wide-card"><div className="tool-heading"><div className="tool-icon blue"><MapPinned size={24}/></div><div><p className="eyebrow">Route profitability</p><h1>True Trip Cost</h1></div></div>
+    <div className="market-grid"><NumberField label="Round-trip miles" value={miles} onChange={setMiles} suffix="mi"/><NumberField label="Vehicle MPG" value={mpg} onChange={setMpg} suffix="mpg"/><NumberField label="Fuel price" value={gas} onChange={setGas} prefix="$"/><NumberField label="Wear per mile" value={wear} onChange={setWear} prefix="$"/><NumberField label="Tolls & parking" value={tolls} onChange={setTolls} prefix="$"/><NumberField label="Travel hours" value={hours} onChange={setHours} suffix="hrs"/><NumberField label="Your hourly value" value={hourly} onChange={setHourly} prefix="$"/></div>
+    <div className="result-row four-results"><ResultStat label="Fuel" value={money.format(fuel)}/><ResultStat label="Vehicle wear" value={money.format(wearCost)}/><ResultStat label="Travel-time value" value={money.format(timeCost)}/><ResultStat label="True trip cost" value={money.format(total)} tone="blue"/></div>
+    <p className="professional-note"><MapPinned size={16}/>Use your actual vehicle and time costs when quoting remote assignments.</p></section>;
+}
+
+function TurnaroundTool() {
+  const today = new Date().toISOString().slice(0,10);
+  const [start, setStart] = useState(today), [businessDays, setBusinessDays] = useState(5), [weekends, setWeekends] = useState(false);
+  const due = useMemo(() => {
+    const date = new Date(`${start}T12:00:00`);
+    if (Number.isNaN(date.valueOf())) return "—";
+    let added = 0;
+    while (added < Math.max(0, businessDays)) {
+      date.setDate(date.getDate() + 1);
+      if (weekends || (date.getDay() !== 0 && date.getDay() !== 6)) added++;
+    }
+    return date.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  }, [start, businessDays, weekends]);
+  return <section className="tool-card"><div className="tool-heading"><div className="tool-icon orange"><CalendarClock size={24}/></div><div><p className="eyebrow">Delivery-date math</p><h1>Turnaround Planner</h1></div></div>
+    <div className="stacked-fields"><label className="field"><span>Start or inspection date</span><input type="date" value={start} onChange={event => setStart(event.target.value)}/></label><NumberField label="Turnaround" value={businessDays} onChange={setBusinessDays} suffix="days" step="1" min={0}/><label className="check-line"><input type="checkbox" checked={weekends} onChange={event => setWeekends(event.target.checked)}/>Count weekends</label></div>
+    <div className="big-answer"><span>Calculated due date</span><strong>{due}</strong></div><p className="settings-note">Calendar aid only; holidays are not automatically excluded.</p></section>;
+}
+
+function QuoteTool() {
+  const [base, setBase] = useState(500), [rush, setRush] = useState(0), [travel, setTravel] = useState(0), [complexity, setComplexity] = useState(0), [units, setUnits] = useState(0), [other, setOther] = useState(0), [hours, setHours] = useState(6);
+  const total = base + rush + travel + complexity + units + other;
+  return <section className="tool-card wide-card"><div className="tool-heading"><div className="tool-icon blue"><ReceiptText size={24}/></div><div><p className="eyebrow">Scope before price</p><h1>Appraisal Fee Builder</h1></div></div>
+    <div className="market-grid"><NumberField label="Base product fee" value={base} onChange={setBase} prefix="$" step="25"/><NumberField label="Rush premium" value={rush} onChange={setRush} prefix="$" step="25"/><NumberField label="Travel premium" value={travel} onChange={setTravel} prefix="$" step="25"/><NumberField label="Complexity premium" value={complexity} onChange={setComplexity} prefix="$" step="25"/><NumberField label="Units / accessory premium" value={units} onChange={setUnits} prefix="$" step="25"/><NumberField label="Other scope premium" value={other} onChange={setOther} prefix="$" step="25"/><NumberField label="Expected total hours" value={hours} onChange={setHours} suffix="hrs" step=".25"/></div>
+    <div className="result-row three-results"><ResultStat label="Quoted fee" value={money.format(total)} tone="blue"/><ResultStat label="Gross hourly" value={money.format(hours > 0 ? total / hours : 0)} tone="orange"/><ResultStat label="Premiums added" value={money.format(total - base)}/></div>
+    <p className="professional-note"><ReceiptText size={16}/>Document assignment complexity and scope; this calculator does not set or recommend fees.</p></section>;
+}
+
 export default function HomePage() {
   const [activeTool, setActiveTool] = useState<ToolId>("clock");
+  const [commandOpen, setCommandOpen] = useState(false);
   const [rate, setRate] = useState(25);
   useEffect(() => {
     try { const saved = localStorage.getItem("mtp-hourly-rate"); if (saved !== null && Number.isFinite(Number(saved))) setRate(Number(saved)); }
     catch { /* Use default. */ }
   }, []);
   useEffect(() => { try { localStorage.setItem("mtp-hourly-rate", String(rate)); } catch { /* Optional. */ } }, [rate]);
+  useEffect(() => {
+    const openCommandCenter = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault(); setCommandOpen((current) => !current);
+      }
+    };
+    window.addEventListener("keydown", openCommandCenter);
+    return () => window.removeEventListener("keydown", openCommandCenter);
+  }, []);
   const activeDefinition = TOOLS.find((tool) => tool.id === activeTool) ?? TOOLS[0];
+  const selectTool = (tool: ToolId) => { setActiveTool(tool); window.scrollTo({ top: 0, behavior: "smooth" }); };
 
   return <main className="site-shell">
     <header className="site-header">
       <a className="brand" href="#top" aria-label="MyToolPage home"><span className="brand-mark"><Wrench size={21} /></span><span><strong>MyToolPage</strong><small>.com</small></span></a>
-      <div className="header-message"><span className="status-dot" />Free tools. No sign-up required.</div>
+      <div className="header-actions"><div className="header-message"><span className="status-dot" />Free tools. No sign-up required.</div>
+        <button type="button" className="command-trigger" onClick={() => setCommandOpen(true)}><Search size={16} /><span>Find a tool</span><kbd>⌘ K</kbd></button></div>
     </header>
-    <FloatingToolStrip activeTool={activeTool} onSelect={setActiveTool} />
+    <CommandCenter open={commandOpen} setOpen={setCommandOpen} onSelect={selectTool} />
+    <FloatingToolStrip activeTool={activeTool} onSelect={selectTool} />
     <div className="workspace" id="top">
       <aside className="tool-index">
         <div className="index-intro"><p className="eyebrow">My toolbox</p><h2>Pick a tool.<br />Get it done.</h2><p>Your everyday business and appraisal math in one clean workspace.</p></div>
-        <nav aria-label="Available tools">{TOOLS.map((tool, index) => { const Icon = tool.icon; return <button key={tool.id} type="button" className={activeTool === tool.id ? "index-tool index-tool-active" : "index-tool"} onClick={() => setActiveTool(tool.id)}><span className="index-number">0{index + 1}</span><Icon size={20} /><span>{tool.label}</span><ArrowRight size={17} className="index-arrow" /></button>; })}</nav>
-        <div className="toolbar-tip"><Grip size={20} /><p><strong>Grab the floating bar.</strong><br />Move it, resize it, or collapse it.</p></div>
+        <nav aria-label="Available tools">{TOOLS.map((tool, index) => { const Icon = tool.icon; return <button key={tool.id} type="button" className={activeTool === tool.id ? "index-tool index-tool-active" : "index-tool"} onClick={() => selectTool(tool.id)}><span className="index-number">0{index + 1}</span><Icon size={20} /><span>{tool.label}</span><ArrowRight size={17} className="index-arrow" /></button>; })}</nav>
+        <div className="toolbar-tip"><Search size={20} /><p><strong>Need something fast?</strong><br />Press Ctrl/⌘ + K to search every tool.</p></div>
       </aside>
       <div className="workbench">
         <div className="workbench-topline"><span>OPEN TOOL</span><strong>{activeDefinition.label}</strong><span className="workbench-rule" /><span>READY</span></div>
@@ -397,7 +708,12 @@ export default function HomePage() {
         {activeTool === "market" && <MarketTool />}
         {activeTool === "gla" && <GlaTool />}
         {activeTool === "convert" && <ConvertTool />}
-        <footer className="site-footer"><span>MyToolPage v0.1</span><span>Practical tools for real work.</span></footer>
+        {activeTool === "grid" && <CompGridTool />}
+        {activeTool === "fee" && <FeeIqTool />}
+        {activeTool === "mileage" && <MileageTool />}
+        {activeTool === "turnaround" && <TurnaroundTool />}
+        {activeTool === "quote" && <QuoteTool />}
+        <footer className="site-footer"><span>MyToolPage v0.3</span><span>Practical tools for real work.</span></footer>
       </div>
     </div>
   </main>;

@@ -43,11 +43,11 @@ const TOOLS = [
 ];
 
 const DEFAULT_TIMES: TimeRow[] = [
-  { day: "Mon", start: "08:00", end: "16:30", breakMinutes: 30 },
-  { day: "Tue", start: "08:00", end: "16:30", breakMinutes: 30 },
-  { day: "Wed", start: "08:00", end: "16:30", breakMinutes: 30 },
-  { day: "Thu", start: "08:00", end: "16:30", breakMinutes: 30 },
-  { day: "Fri", start: "08:00", end: "16:30", breakMinutes: 30 },
+  { day: "Mon", start: "", end: "", breakMinutes: 0 },
+  { day: "Tue", start: "", end: "", breakMinutes: 0 },
+  { day: "Wed", start: "", end: "", breakMinutes: 0 },
+  { day: "Thu", start: "", end: "", breakMinutes: 0 },
+  { day: "Fri", start: "", end: "", breakMinutes: 0 },
   { day: "Sat", start: "", end: "", breakMinutes: 0 },
   { day: "Sun", start: "", end: "", breakMinutes: 0 },
 ];
@@ -669,7 +669,7 @@ function QuoteTool() {
 export default function HomePage() {
   const [activeTool, setActiveTool] = useState<ToolId>("clock");
   const [commandOpen, setCommandOpen] = useState(false);
-  const [rate, setRate] = useState(25);
+  const [rate, setRate] = useState(0);
   useEffect(() => {
     try { const saved = localStorage.getItem("mtp-hourly-rate"); if (saved !== null && Number.isFinite(Number(saved))) setRate(Number(saved)); }
     catch { /* Use default. */ }
@@ -713,7 +713,7 @@ export default function HomePage() {
         {activeTool === "mileage" && <MileageTool />}
         {activeTool === "turnaround" && <TurnaroundTool />}
         {activeTool === "quote" && <QuoteTool />}
-        <footer className="site-footer"><span>MyToolPage v0.3</span><span>Practical tools for real work.</span></footer>
+        <footer className="site-footer"><span>MyToolPage v0.3.1</span><span>Practical tools for real work.</span></footer>
       </div>
     </div>
   </main>;

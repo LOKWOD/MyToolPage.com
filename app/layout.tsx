@@ -4,7 +4,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "MyToolPage | Practical Tools for Real Work",
   description:
-    "Free time-card, wage, business, and real estate appraisal calculators in one movable toolbox.",
+    "Ten free time, wage, business, trip-cost, and real estate appraisal calculators in one searchable toolbox.",
   applicationName: "MyToolPage",
   icons: {
     icon: "/favicon.svg",

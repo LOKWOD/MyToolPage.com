@@ -12,7 +12,7 @@ import {
   CommandItem, CommandList, CommandShortcut,
 } from "@/components/ui/command";
 import {
-  Fragment, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState,
+  Fragment, PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useMemo, useRef, useState,
 } from "react";
 import { calculateTaxProration, calculateWages, calculateWorkerPay } from "@/lib/calculators";
 
@@ -158,6 +158,13 @@ function ResultStat({ label, value, tone }: {
   return <div className={`result-stat ${tone ? `result-${tone}` : ""}`}>
     <span>{label}</span><strong>{value}</strong>
   </div>;
+}
+
+function CalculationMethod({ children }: { children: ReactNode }) {
+  return <details className="calculation-method">
+    <summary>How this calculator works</summary>
+    <div>{children}<small>Method reviewed September 16, 2026.</small></div>
+  </details>;
 }
 
 function CommandCenter({ open, setOpen, onSelect }: {
@@ -387,6 +394,7 @@ function WageTool({ rate, setRate }: { rate: number; setRate: (value: number) =>
       <ResultStat label="Overtime" value={totals.overtimeHours.toFixed(2)} tone="orange" />
       <ResultStat label="Estimated gross" value={money.format(totals.grossPay)} tone="blue" />
     </div>
+    <CalculationMethod><p><strong>Gross pay</strong> = regular hours × hourly rate + overtime hours × hourly rate × overtime multiplier. The selected threshold is applied once to the displayed period. Overnight shifts roll past midnight, and break minutes are subtracted before pay is calculated.</p></CalculationMethod>
   </section>;
 }
 
@@ -436,6 +444,7 @@ function PayrollTool() {
       </tr>)}</tbody>
     </table></div>
     <div className="result-row three-results" aria-live="polite"><ResultStat label="Workers" value={String(workers.length)} /><ResultStat label="Total hours" value={totalHours.toFixed(2)} /><ResultStat label="Total to pay" value={money.format(totalDue)} tone="blue" /></div>
+    <CalculationMethod><p><strong>Amount due per worker</strong> = hours × rate + extra payments − deductions, with a floor of $0. Negative or nonnumeric amounts are treated as zero. Each row is calculated separately, then added to the batch total.</p></CalculationMethod>
     <p className="professional-note"><CircleDollarSign size={16} />Gross payout worksheet only. It does not calculate overtime, payroll taxes, withholding, benefits, or worker classification.</p>
   </section>;
 }
@@ -460,6 +469,7 @@ function TaxProrationTool() {
       <ResultStat label={`Buyer share · ${result.buyerDays} days`} value={money.format(result.buyerShare)} tone="blue" />
       <ResultStat label="Check total" value={money.format(result.sellerShare + result.buyerShare)} />
     </div>
+    <CalculationMethod><p><strong>Daily rate</strong> = annual taxes ÷ 365, or ÷ 366 in a leap year. Seller share = daily rate × seller days; buyer share uses the remaining days. The closing-day choice moves one day between the parties without changing the annual total.</p></CalculationMethod>
     <p className="professional-note"><CalendarDays size={16} />Assumes calendar-year taxes accrue evenly across {result.daysInYear || 365} days. Confirm the tax period, local custom, contract language, exemptions, credits, and final settlement figures with the closing professional.</p>
   </section>;
 }
@@ -808,7 +818,7 @@ export default function HomePage() {
         {activeTool === "mileage" && <MileageTool />}
         {activeTool === "turnaround" && <TurnaroundTool />}
         {activeTool === "quote" && <QuoteTool />}
-        <footer className="site-footer"><span>MyToolPage v0.4.0 · 12 tools</span><span>Practical tools for real work.</span></footer>
+        <footer className="site-footer"><span>MyToolPage v0.4.1 · 12 tools</span><span>Practical tools for real work.</span></footer>
       </div>
     </div>
   </main>;

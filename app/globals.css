@@ -176,6 +176,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .result-blue { border-color: #c8dfff; background: #eef6ff; }
 .result-blue strong { color: var(--blue-dark); }
 
+.calculation-method { margin-top: 15px; border: 1px solid #d7dde2; border-radius: 11px; background: #f7f9fa; color: var(--muted); }
+.calculation-method summary { min-height: 44px; display: flex; align-items: center; gap: 8px; padding: 10px 14px; color: var(--ink); font-size: 12px; font-weight: 800; cursor: pointer; list-style: none; }
+.calculation-method summary::-webkit-details-marker { display: none; }
+.calculation-method summary::before { content: "+"; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; background: #e4edf7; color: var(--blue-dark); font-size: 15px; }
+.calculation-method[open] summary::before { content: "−"; }
+.calculation-method > div { padding: 0 14px 14px 42px; font-size: 12px; line-height: 1.55; }
+.calculation-method p { margin: 0; }
+.calculation-method small { display: block; margin-top: 7px; color: #7a8792; font-size: 10px; font-weight: 750; letter-spacing: .03em; text-transform: uppercase; }
+
 .rate-panel { margin-bottom: 20px; padding: 17px; border: 1px solid #dbe0e3; border-radius: 13px; background: #f4f6f7; }
 .rate-panel-title { display: flex; align-items: flex-start; gap: 9px; margin-bottom: 14px; }
 .rate-panel-title svg { flex: 0 0 auto; color: var(--blue); }

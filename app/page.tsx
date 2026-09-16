@@ -1,10 +1,11 @@
 "use client";
+/* eslint-disable react-hooks/set-state-in-effect -- localStorage is intentionally hydrated after the client mounts. */
 
 import {
   AlarmClock, ArrowRight, BadgeDollarSign, Calculator, ChevronDown, ChevronUp,
   CircleDollarSign, Clock3, Copy, Grip, Hammer, Home, Maximize2,
   Pause, Play, Plus, RefreshCcw, Ruler, Search, SlidersHorizontal, Square, TableProperties,
-  Trash2, TrendingUp, Wrench, MapPinned, CalendarClock, ReceiptText,
+  Trash2, TrendingUp, Wrench, MapPinned, CalendarClock, ReceiptText, Users, CalendarDays,
 } from "lucide-react";
 import {
   CommandDialog, CommandEmpty, CommandGroup, CommandInput,
@@ -13,9 +14,11 @@ import {
 import {
   Fragment, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState,
 } from "react";
+import { calculateTaxProration, calculateWages, calculateWorkerPay } from "@/lib/calculators";
 
-type ToolId = "clock" | "wages" | "market" | "gla" | "convert" | "grid" | "fee" | "mileage" | "turnaround" | "quote";
+type ToolId = "clock" | "wages" | "payroll" | "proration" | "market" | "gla" | "convert" | "grid" | "fee" | "mileage" | "turnaround" | "quote";
 type TimeRow = { day: string; start: string; end: string; breakMinutes: number };
+type WorkerRow = { id: number; name: string; hours: number; rate: number; extra: number; deduction: number };
 type AreaRow = { id: number; label: string; length: number; width: number; count: number };
 type GridProperty = {
   gla: number; siteAcres: number; age: number; beds: number;
@@ -31,7 +34,9 @@ type NumericGridKey = Exclude<keyof GridProperty, "condition">;
 
 const TOOLS = [
   { id: "clock" as const, label: "Time Clock", short: "Clock", icon: Clock3, description: "Track a live work session and earnings" },
-  { id: "wages" as const, label: "Wage Calculator", short: "Wages", icon: CircleDollarSign, description: "Total weekly hours, overtime, and gross pay" },
+  { id: "wages" as const, label: "Wage Calculator", short: "Wages", icon: CircleDollarSign, description: "Total 1-day, 3-day, or weekly hours and gross pay" },
+  { id: "payroll" as const, label: "Worker Payout Sheet", short: "Payouts", icon: Users, description: "Total a daily or multi-day payment batch" },
+  { id: "proration" as const, label: "Tax Proration", short: "Proration", icon: CalendarDays, description: "Split annual property taxes at closing" },
   { id: "market" as const, label: "Market Adjustment", short: "Market", icon: TrendingUp, description: "Calculate a supported time adjustment" },
   { id: "gla" as const, label: "GLA Worksheet", short: "GLA", icon: Ruler, description: "Build rectangular areas and total GLA" },
   { id: "convert" as const, label: "Property Converter", short: "Convert", icon: Calculator, description: "Convert land, distance, and price per square foot" },
@@ -171,7 +176,7 @@ function CommandCenter({ open, setOpen, onSelect }: {
             onSelect={() => { onSelect(tool.id); setOpen(false); }}>
             <span className="command-item-icon"><Icon size={18} /></span>
             <span><strong>{tool.label}</strong><small>{tool.description}</small></span>
-            <CommandShortcut>0{index + 1}</CommandShortcut>
+            <CommandShortcut>{String(index + 1).padStart(2, "0")}</CommandShortcut>
           </CommandItem>;
         })}
       </CommandGroup>
@@ -186,6 +191,7 @@ function FloatingToolStrip({ activeTool, onSelect }: {
   const [position, setPosition] = useState({ x: 24, y: 84 });
   const [size, setSize] = useState({ width: 720, height: 92 });
   const [collapsed, setCollapsed] = useState(false);
+  const [toolbarReady, setToolbarReady] = useState(false);
   const moveRef = useRef<{ pointerId: number; dx: number; dy: number } | null>(null);
   const resizeRef = useRef<{
     pointerId: number; startX: number; startY: number; width: number; height: number;
@@ -202,12 +208,14 @@ function FloatingToolStrip({ activeTool, onSelect }: {
         setPosition({ x: Math.max(16, (window.innerWidth - 720) / 2), y: 84 });
       }
     } catch { /* Storage is optional. */ }
+    setToolbarReady(true);
   }, []);
 
   useEffect(() => {
+    if (!toolbarReady) return;
     try { localStorage.setItem("mtp-toolbar", JSON.stringify({ position, size })); }
     catch { /* Storage is optional. */ }
-  }, [position, size]);
+  }, [position, size, toolbarReady]);
 
   const clamp = (x: number, y: number) => ({
     x: Math.max(8, Math.min(x, window.innerWidth - Math.min(size.width, window.innerWidth - 16))),
@@ -276,6 +284,7 @@ function TimeClockTool({ rate, setRate }: { rate: number; setRate: (value: numbe
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [accumulated, setAccumulated] = useState(0);
   const [now, setNow] = useState(0);
+  const [clockReady, setClockReady] = useState(false);
 
   useEffect(() => {
     setNow(Date.now());
@@ -286,14 +295,16 @@ function TimeClockTool({ rate, setRate }: { rate: number; setRate: (value: numbe
         setStartedAt(parsed.startedAt); setAccumulated(parsed.accumulated || 0);
       }
     } catch { /* Ignore stale state. */ }
+    setClockReady(true);
   }, []);
   useEffect(() => {
+    if (!clockReady) return;
     try { localStorage.setItem("mtp-clock", JSON.stringify({ startedAt, accumulated })); }
     catch { /* Persistence is optional. */ }
     if (startedAt === null) return;
     const interval = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(interval);
-  }, [startedAt, accumulated]);
+  }, [startedAt, accumulated, clockReady]);
 
   const elapsed = accumulated + (startedAt === null ? 0 : Math.max(0, now - startedAt));
   const earned = elapsed / 3_600_000 * (Number(rate) || 0);
@@ -325,20 +336,18 @@ function TimeClockTool({ rate, setRate }: { rate: number; setRate: (value: numbe
 
 function WageTool({ rate, setRate }: { rate: number; setRate: (value: number) => void }) {
   const [rows, setRows] = useState(DEFAULT_TIMES);
+  const [periodDays, setPeriodDays] = useState<1 | 3 | 7>(3);
   const [overtimeAfter, setOvertimeAfter] = useState(40);
   const [overtimeMultiplier, setOvertimeMultiplier] = useState(1.5);
   const [copied, setCopied] = useState(false);
-  const totals = useMemo(() => {
-    const totalHours = rows.reduce((sum, row) => sum + hoursForRow(row), 0);
-    const regularHours = Math.min(totalHours, Math.max(0, overtimeAfter));
-    const overtimeHours = Math.max(0, totalHours - Math.max(0, overtimeAfter));
-    return { totalHours, regularHours, overtimeHours,
-      grossPay: regularHours * rate + overtimeHours * rate * overtimeMultiplier };
-  }, [rows, overtimeAfter, overtimeMultiplier, rate]);
+  const totals = useMemo(() => calculateWages(
+    rows.slice(0, periodDays).map(hoursForRow), rate, overtimeAfter, overtimeMultiplier,
+  ), [rows, periodDays, overtimeAfter, overtimeMultiplier, rate]);
   const updateRow = (index: number, key: keyof TimeRow, value: string | number) =>
     setRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, [key]: value } : row));
   const copySummary = async () => {
-    const text = `Weekly time card: ${totals.totalHours.toFixed(2)} hours | ${totals.regularHours.toFixed(2)} regular | ${totals.overtimeHours.toFixed(2)} overtime | ${money.format(totals.grossPay)} gross pay`;
+    const label = periodDays === 1 ? "Daily" : periodDays === 3 ? "3-day" : "Weekly";
+    const text = `${label} time card: ${totals.totalHours.toFixed(2)} hours | ${totals.regularHours.toFixed(2)} regular | ${totals.overtimeHours.toFixed(2)} overtime | ${money.format(totals.grossPay)} gross pay`;
     try { await navigator.clipboard.writeText(text); setCopied(true); window.setTimeout(() => setCopied(false), 1800); }
     catch { setCopied(false); }
   };
@@ -346,13 +355,18 @@ function WageTool({ rate, setRate }: { rate: number; setRate: (value: number) =>
   return <section className="tool-card wide-card">
     <div className="tool-heading heading-with-action">
       <div className="heading-group"><div className="tool-icon blue"><CircleDollarSign size={24} /></div>
-        <div><p className="eyebrow">Hours, overtime & gross pay</p><h1>Weekly Wage Calculator</h1></div></div>
-      <button type="button" className="quiet-button" onClick={copySummary}><Copy size={16} />{copied ? "Copied" : "Copy summary"}</button>
+        <div><p className="eyebrow">Daily, 3-day, or weekly pay</p><h1>Wage Calculator</h1></div></div>
+      <div className="heading-actions"><button type="button" className="quiet-button" onClick={() => setRows(DEFAULT_TIMES)}><RefreshCcw size={16} />Clear</button>
+        <button type="button" className="quiet-button" onClick={copySummary}><Copy size={16} />{copied ? "Copied" : "Copy summary"}</button></div>
+    </div>
+    <div className="period-control" role="group" aria-label="Pay period length">
+      {([1, 3, 7] as const).map((days) => <button type="button" key={days} aria-pressed={periodDays === days}
+        onClick={() => setPeriodDays(days)}>{days === 1 ? "1 day" : days === 3 ? "3 days" : "7 days"}</button>)}
     </div>
     <div className="wage-layout">
       <div className="time-table-wrap"><table className="time-table">
         <thead><tr><th>Day</th><th>Start</th><th>End</th><th>Break</th><th>Hours</th></tr></thead>
-        <tbody>{rows.map((row, index) => <tr key={row.day}>
+        <tbody>{rows.slice(0, periodDays).map((row, index) => <tr key={row.day}>
           <th>{row.day}</th>
           <td><input aria-label={`${row.day} start time`} type="time" value={row.start} onChange={(event) => updateRow(index, "start", event.target.value)} /></td>
           <td><input aria-label={`${row.day} end time`} type="time" value={row.end} onChange={(event) => updateRow(index, "end", event.target.value)} /></td>
@@ -364,7 +378,7 @@ function WageTool({ rate, setRate }: { rate: number; setRate: (value: number) =>
         <NumberField label="Hourly rate" value={rate} onChange={setRate} prefix="$" min={0} step="0.25" />
         <NumberField label="Overtime after" value={overtimeAfter} onChange={setOvertimeAfter} suffix="hrs" min={0} step="0.5" />
         <NumberField label="OT multiplier" value={overtimeMultiplier} onChange={setOvertimeMultiplier} suffix="×" min={0} step="0.1" />
-        <p className="settings-note">Gross estimate before taxes and deductions. Confirm applicable wage rules.</p>
+        <p className="settings-note">Gross estimate before taxes and deductions. The overtime threshold applies only to the rows shown; include prior workweek hours or change the threshold when required by applicable law.</p>
       </aside>
     </div>
     <div className="result-row four-results" aria-live="polite">
@@ -373,6 +387,80 @@ function WageTool({ rate, setRate }: { rate: number; setRate: (value: number) =>
       <ResultStat label="Overtime" value={totals.overtimeHours.toFixed(2)} tone="orange" />
       <ResultStat label="Estimated gross" value={money.format(totals.grossPay)} tone="blue" />
     </div>
+  </section>;
+}
+
+const DEFAULT_WORKERS: WorkerRow[] = [
+  { id: 1, name: "", hours: 0, rate: 0, extra: 0, deduction: 0 },
+  { id: 2, name: "", hours: 0, rate: 0, extra: 0, deduction: 0 },
+  { id: 3, name: "", hours: 0, rate: 0, extra: 0, deduction: 0 },
+];
+
+function PayrollTool() {
+  const [workers, setWorkers] = useState(DEFAULT_WORKERS);
+  const [copied, setCopied] = useState(false);
+  const results = workers.map(calculateWorkerPay);
+  const totalHours = workers.reduce((sum, worker) => sum + Math.max(0, Number(worker.hours) || 0), 0);
+  const totalDue = results.reduce((sum, result) => sum + result.amountDue, 0);
+  const updateWorker = (id: number, key: keyof WorkerRow, value: string | number) =>
+    setWorkers((current) => current.map((worker) => worker.id === id ? { ...worker, [key]: value } : worker));
+  const addWorker = () => {
+    const id = Math.max(0, ...workers.map((worker) => worker.id)) + 1;
+    setWorkers((current) => [...current, { id, name: "", hours: 0, rate: 0, extra: 0, deduction: 0 }]);
+  };
+  const copyPayouts = async () => {
+    const named = workers.map((worker, index) => `${worker.name.trim() || `Worker ${index + 1}`}: ${money.format(results[index].amountDue)}`);
+    const text = `Worker payout sheet\n${named.join("\n")}\nTotal: ${money.format(totalDue)}`;
+    try { await navigator.clipboard.writeText(text); setCopied(true); window.setTimeout(() => setCopied(false), 1800); }
+    catch { setCopied(false); }
+  };
+
+  return <section className="tool-card wide-card">
+    <div className="tool-heading heading-with-action">
+      <div className="heading-group"><div className="tool-icon orange"><Users size={24} /></div>
+        <div><p className="eyebrow">Daily & multi-day payments</p><h1>Worker Payout Sheet</h1></div></div>
+      <div className="heading-actions"><button type="button" className="quiet-button" onClick={() => setWorkers(DEFAULT_WORKERS)}><RefreshCcw size={16} />Clear</button>
+        <button type="button" className="quiet-button" onClick={copyPayouts}><Copy size={16} />{copied ? "Copied" : "Copy payouts"}</button>
+        <button type="button" className="secondary-button" onClick={addWorker}><Plus size={17} />Add worker</button></div>
+    </div>
+    <div className="payout-table-wrap"><table className="payout-table">
+      <thead><tr><th>Worker</th><th>Hours</th><th>Rate</th><th>Extra / reimbursement</th><th>Deduction</th><th>Amount due</th><th><span className="sr-only">Remove</span></th></tr></thead>
+      <tbody>{workers.map((worker, index) => <tr key={worker.id}>
+        <td><input className="worker-name" aria-label={`Worker ${index + 1} name`} placeholder={`Worker ${index + 1}`} value={worker.name} onChange={(event) => updateWorker(worker.id, "name", event.target.value)} /></td>
+        <td><input aria-label={`${worker.name || `Worker ${index + 1}`} hours`} type="number" min="0" step=".25" value={worker.hours} onChange={(event) => updateWorker(worker.id, "hours", Number(event.target.value))} /></td>
+        <td><input aria-label={`${worker.name || `Worker ${index + 1}`} hourly rate`} type="number" min="0" step=".25" value={worker.rate} onChange={(event) => updateWorker(worker.id, "rate", Number(event.target.value))} /></td>
+        <td><input aria-label={`${worker.name || `Worker ${index + 1}`} extra payment`} type="number" min="0" step=".01" value={worker.extra} onChange={(event) => updateWorker(worker.id, "extra", Number(event.target.value))} /></td>
+        <td><input aria-label={`${worker.name || `Worker ${index + 1}`} deduction`} type="number" min="0" step=".01" value={worker.deduction} onChange={(event) => updateWorker(worker.id, "deduction", Number(event.target.value))} /></td>
+        <td><strong>{money.format(results[index].amountDue)}</strong></td>
+        <td>{workers.length > 1 && <button type="button" className="icon-button" aria-label={`Remove ${worker.name || `Worker ${index + 1}`}`} onClick={() => setWorkers((current) => current.filter((item) => item.id !== worker.id))}><Trash2 size={17} /></button>}</td>
+      </tr>)}</tbody>
+    </table></div>
+    <div className="result-row three-results" aria-live="polite"><ResultStat label="Workers" value={String(workers.length)} /><ResultStat label="Total hours" value={totalHours.toFixed(2)} /><ResultStat label="Total to pay" value={money.format(totalDue)} tone="blue" /></div>
+    <p className="professional-note"><CircleDollarSign size={16} />Gross payout worksheet only. It does not calculate overtime, payroll taxes, withholding, benefits, or worker classification.</p>
+  </section>;
+}
+
+function TaxProrationTool() {
+  const today = new Date().toISOString().slice(0, 10);
+  const [annualTaxes, setAnnualTaxes] = useState(0);
+  const [closingDate, setClosingDate] = useState(today);
+  const [sellerPaysClosingDay, setSellerPaysClosingDay] = useState(false);
+  const result = calculateTaxProration(annualTaxes, closingDate, sellerPaysClosingDay);
+  return <section className="tool-card wide-card">
+    <div className="tool-heading"><div className="tool-icon blue"><CalendarDays size={24} /></div>
+      <div><p className="eyebrow">Closing-day math</p><h1>Property Tax Proration</h1></div></div>
+    <div className="market-grid proration-inputs">
+      <NumberField label="Annual property taxes" value={annualTaxes} onChange={setAnnualTaxes} prefix="$" min={0} step="100" />
+      <label className="field"><span>Closing date</span><input type="date" value={closingDate} onChange={(event) => setClosingDate(event.target.value)} /></label>
+      <label className="field"><span>Who pays the closing day?</span><select value={sellerPaysClosingDay ? "seller" : "buyer"} onChange={(event) => setSellerPaysClosingDay(event.target.value === "seller")}><option value="buyer">Buyer</option><option value="seller">Seller</option></select></label>
+    </div>
+    <div className="result-row four-results" aria-live="polite">
+      <ResultStat label="Daily tax rate" value={money.format(result.dailyRate)} />
+      <ResultStat label={`Seller share · ${result.sellerDays} days`} value={money.format(result.sellerShare)} tone="orange" />
+      <ResultStat label={`Buyer share · ${result.buyerDays} days`} value={money.format(result.buyerShare)} tone="blue" />
+      <ResultStat label="Check total" value={money.format(result.sellerShare + result.buyerShare)} />
+    </div>
+    <p className="professional-note"><CalendarDays size={16} />Assumes calendar-year taxes accrue evenly across {result.daysInYear || 365} days. Confirm the tax period, local custom, contract language, exemptions, credits, and final settlement figures with the closing professional.</p>
   </section>;
 }
 
@@ -670,11 +758,16 @@ export default function HomePage() {
   const [activeTool, setActiveTool] = useState<ToolId>("clock");
   const [commandOpen, setCommandOpen] = useState(false);
   const [rate, setRate] = useState(0);
+  const [rateReady, setRateReady] = useState(false);
   useEffect(() => {
     try { const saved = localStorage.getItem("mtp-hourly-rate"); if (saved !== null && Number.isFinite(Number(saved))) setRate(Number(saved)); }
     catch { /* Use default. */ }
+    setRateReady(true);
   }, []);
-  useEffect(() => { try { localStorage.setItem("mtp-hourly-rate", String(rate)); } catch { /* Optional. */ } }, [rate]);
+  useEffect(() => {
+    if (!rateReady) return;
+    try { localStorage.setItem("mtp-hourly-rate", String(rate)); } catch { /* Optional. */ }
+  }, [rate, rateReady]);
   useEffect(() => {
     const openCommandCenter = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
@@ -698,13 +791,15 @@ export default function HomePage() {
     <div className="workspace" id="top">
       <aside className="tool-index">
         <div className="index-intro"><p className="eyebrow">My toolbox</p><h2>Pick a tool.<br />Get it done.</h2><p>Your everyday business and appraisal math in one clean workspace.</p></div>
-        <nav aria-label="Available tools">{TOOLS.map((tool, index) => { const Icon = tool.icon; return <button key={tool.id} type="button" className={activeTool === tool.id ? "index-tool index-tool-active" : "index-tool"} onClick={() => selectTool(tool.id)}><span className="index-number">0{index + 1}</span><Icon size={20} /><span>{tool.label}</span><ArrowRight size={17} className="index-arrow" /></button>; })}</nav>
+        <nav aria-label="Available tools">{TOOLS.map((tool, index) => { const Icon = tool.icon; return <button key={tool.id} type="button" className={activeTool === tool.id ? "index-tool index-tool-active" : "index-tool"} onClick={() => selectTool(tool.id)}><span className="index-number">{String(index + 1).padStart(2, "0")}</span><Icon size={20} /><span>{tool.label}</span><ArrowRight size={17} className="index-arrow" /></button>; })}</nav>
         <div className="toolbar-tip"><Search size={20} /><p><strong>Need something fast?</strong><br />Press Ctrl/⌘ + K to search every tool.</p></div>
       </aside>
       <div className="workbench">
         <div className="workbench-topline"><span>OPEN TOOL</span><strong>{activeDefinition.label}</strong><span className="workbench-rule" /><span>READY</span></div>
         {activeTool === "clock" && <TimeClockTool rate={rate} setRate={setRate} />}
         {activeTool === "wages" && <WageTool rate={rate} setRate={setRate} />}
+        {activeTool === "payroll" && <PayrollTool />}
+        {activeTool === "proration" && <TaxProrationTool />}
         {activeTool === "market" && <MarketTool />}
         {activeTool === "gla" && <GlaTool />}
         {activeTool === "convert" && <ConvertTool />}
@@ -713,7 +808,7 @@ export default function HomePage() {
         {activeTool === "mileage" && <MileageTool />}
         {activeTool === "turnaround" && <TurnaroundTool />}
         {activeTool === "quote" && <QuoteTool />}
-        <footer className="site-footer"><span>MyToolPage v0.3.1</span><span>Practical tools for real work.</span></footer>
+        <footer className="site-footer"><span>MyToolPage v0.4.0 · 12 tools</span><span>Practical tools for real work.</span></footer>
       </div>
     </div>
   </main>;

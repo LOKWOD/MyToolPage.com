@@ -31,3 +31,24 @@ test("renders development preview metadata", async () => {
   );
   assert.match(await response.text(), developmentPreviewMeta);
 });
+
+test("publishes canonical discovery metadata, sitemap, and robots rules", async () => {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("discovery-test", `${process.pid}-${Date.now()}`);
+  const { default: worker } = await import(workerUrl.href);
+  const env = { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
+  const context = { waitUntil() {}, passThroughOnException() {} };
+  const home = await worker.fetch(new Request("http://localhost/"), env, context);
+  const html = await home.text();
+  assert.match(html, /rel="canonical" href="https:\/\/mytoolpage\.com\/"/);
+  assert.match(html, /"@type":"WebApplication"/);
+  assert.match(html, /Field day planner/);
+
+  const sitemap = await worker.fetch(new Request("http://localhost/sitemap.xml"), env, context);
+  assert.equal(sitemap.status, 200);
+  assert.match(await sitemap.text(), /https:\/\/mytoolpage\.com\//);
+
+  const robots = await worker.fetch(new Request("http://localhost/robots.txt"), env, context);
+  assert.equal(robots.status, 200);
+  assert.match(await robots.text(), /Sitemap: https:\/\/mytoolpage\.com\/sitemap\.xml/);
+});

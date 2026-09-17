@@ -6,6 +6,7 @@ import {
   CircleDollarSign, Clock3, Copy, Grip, Hammer, Home, Maximize2,
   Pause, Play, Plus, RefreshCcw, Ruler, Search, SlidersHorizontal, Square, TableProperties,
   Trash2, TrendingUp, Wrench, MapPinned, CalendarClock, ReceiptText, Users, CalendarDays,
+  Route, ClipboardList,
 } from "lucide-react";
 import {
   CommandDialog, CommandEmpty, CommandGroup, CommandInput,
@@ -14,11 +15,15 @@ import {
 import {
   Fragment, PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useMemo, useRef, useState,
 } from "react";
-import { calculateTaxProration, calculateWages, calculateWorkerPay } from "@/lib/calculators";
+import {
+  calculateFieldDayCapacity, calculateRepairEstimate, calculateTaxProration,
+  calculateWages, calculateWorkerPay,
+} from "@/lib/calculators";
 
-type ToolId = "clock" | "wages" | "payroll" | "proration" | "market" | "gla" | "convert" | "grid" | "fee" | "mileage" | "turnaround" | "quote";
+type ToolId = "clock" | "wages" | "payroll" | "proration" | "fieldday" | "repairs" | "market" | "gla" | "convert" | "grid" | "fee" | "mileage" | "turnaround" | "quote";
 type TimeRow = { day: string; start: string; end: string; breakMinutes: number };
 type WorkerRow = { id: number; name: string; hours: number; rate: number; extra: number; deduction: number };
+type RepairRow = { id: number; label: string; quantity: number; unitCost: number };
 type AreaRow = { id: number; label: string; length: number; width: number; count: number };
 type GridProperty = {
   gla: number; siteAcres: number; age: number; beds: number;
@@ -37,6 +42,8 @@ const TOOLS = [
   { id: "wages" as const, label: "Wage Calculator", short: "Wages", icon: CircleDollarSign, description: "Total 1-day, 3-day, or weekly hours and gross pay" },
   { id: "payroll" as const, label: "Worker Payout Sheet", short: "Payouts", icon: Users, description: "Total a daily or multi-day payment batch" },
   { id: "proration" as const, label: "Tax Proration", short: "Proration", icon: CalendarDays, description: "Split annual property taxes at closing" },
+  { id: "fieldday" as const, label: "Field Day Planner", short: "Field Day", icon: Route, description: "Test inspection-day capacity and build a stop schedule" },
+  { id: "repairs" as const, label: "Repair Cost Worksheet", short: "Repairs", icon: ClipboardList, description: "Build a repair scope with contingency and cost per square foot" },
   { id: "market" as const, label: "Market Adjustment", short: "Market", icon: TrendingUp, description: "Calculate a supported time adjustment" },
   { id: "gla" as const, label: "GLA Worksheet", short: "GLA", icon: Ruler, description: "Build rectangular areas and total GLA" },
   { id: "convert" as const, label: "Property Converter", short: "Convert", icon: Calculator, description: "Convert land, distance, and price per square foot" },
@@ -55,6 +62,12 @@ const DEFAULT_TIMES: TimeRow[] = [
   { day: "Fri", start: "", end: "", breakMinutes: 0 },
   { day: "Sat", start: "", end: "", breakMinutes: 0 },
   { day: "Sun", start: "", end: "", breakMinutes: 0 },
+];
+
+const DEFAULT_REPAIRS: RepairRow[] = [
+  { id: 1, label: "", quantity: 0, unitCost: 0 },
+  { id: 2, label: "", quantity: 0, unitCost: 0 },
+  { id: 3, label: "", quantity: 0, unitCost: 0 },
 ];
 
 const DEFAULT_AREAS: AreaRow[] = [
@@ -82,6 +95,10 @@ const money = new Intl.NumberFormat("en-US", {
   style: "currency", currency: "USD", maximumFractionDigits: 2,
 });
 
+function safeNonNegative(value: number) {
+  return Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
 function timeToMinutes(value: string) {
   if (!value) return null;
   const [hours, minutes] = value.split(":").map(Number);
@@ -100,6 +117,23 @@ function formatElapsed(milliseconds: number) {
   const seconds = Math.max(0, Math.floor(milliseconds / 1000));
   return [Math.floor(seconds / 3600), Math.floor((seconds % 3600) / 60), seconds % 60]
     .map((value) => String(value).padStart(2, "0")).join(":");
+}
+
+function formatClockMinutes(totalMinutes: number) {
+  if (!Number.isFinite(totalMinutes)) return "—";
+  const normalized = ((Math.round(totalMinutes) % 1440) + 1440) % 1440;
+  const hours = Math.floor(normalized / 60);
+  const minutes = normalized % 60;
+  const suffix = hours >= 12 ? "PM" : "AM";
+  const hour12 = hours % 12 || 12;
+  return `${hour12}:${String(minutes).padStart(2, "0")} ${suffix}`;
+}
+
+function formatDuration(minutes: number) {
+  const safe = Math.max(0, Math.round(Number.isFinite(minutes) ? minutes : 0));
+  const hours = Math.floor(safe / 60);
+  const remainder = safe % 60;
+  return hours ? `${hours} hr ${remainder} min` : `${remainder} min`;
 }
 
 function daysBetween(first: string, second: string) {
@@ -163,7 +197,7 @@ function ResultStat({ label, value, tone }: {
 function CalculationMethod({ children }: { children: ReactNode }) {
   return <details className="calculation-method">
     <summary>How this calculator works</summary>
-    <div>{children}<small>Method reviewed September 16, 2026.</small></div>
+    <div>{children}<small>Method reviewed September 17, 2026.</small></div>
   </details>;
 }
 
@@ -471,6 +505,178 @@ function TaxProrationTool() {
     </div>
     <CalculationMethod><p><strong>Daily rate</strong> = annual taxes ÷ 365, or ÷ 366 in a leap year. Seller share = daily rate × seller days; buyer share uses the remaining days. The closing-day choice moves one day between the parties without changing the annual total.</p></CalculationMethod>
     <p className="professional-note"><CalendarDays size={16} />Assumes calendar-year taxes accrue evenly across {result.daysInYear || 365} days. Confirm the tax period, local custom, contract language, exemptions, credits, and final settlement figures with the closing professional.</p>
+  </section>;
+}
+
+function FieldDayTool() {
+  const defaults = {
+    startTime: "09:00", workdayHours: 8.5, stops: 10,
+    inspectionMinutes: 30, travelMinutes: 25, breakMinutes: 30, bufferMinutes: 30,
+  };
+  const [values, setValues] = useState(defaults);
+  const [ready, setReady] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("mtp-field-day");
+      if (saved) setValues((current) => ({ ...current, ...JSON.parse(saved) }));
+    } catch { /* Storage is optional. */ }
+    setReady(true);
+  }, []);
+  useEffect(() => {
+    if (!ready) return;
+    try { localStorage.setItem("mtp-field-day", JSON.stringify(values)); }
+    catch { /* Storage is optional. */ }
+  }, [values, ready]);
+
+  const update = (key: keyof typeof values, value: number | string) =>
+    setValues((current) => ({ ...current, [key]: value }));
+  const capacity = calculateFieldDayCapacity(
+    values.workdayHours * 60, values.stops, values.inspectionMinutes,
+    values.travelMinutes, values.breakMinutes, values.bufferMinutes,
+  );
+  const start = timeToMinutes(values.startTime) ?? 0;
+  const plannedFinish = start + capacity.totalMinutes;
+  const schedule = useMemo(() => {
+    const rows: { stop: number; arrival: number; departure: number }[] = [];
+    const count = Math.min(50, Math.floor(safeNonNegative(Number(values.stops))));
+    let cursor = start;
+    const breakAfter = Math.ceil(count / 2);
+    const inspection = safeNonNegative(Number(values.inspectionMinutes));
+    const travel = safeNonNegative(Number(values.travelMinutes));
+    const breakTime = safeNonNegative(Number(values.breakMinutes));
+    for (let index = 0; index < count; index++) {
+      const departure = cursor + inspection;
+      rows.push({ stop: index + 1, arrival: cursor, departure });
+      cursor = departure;
+      if (index + 1 === breakAfter) cursor += breakTime;
+      if (index < count - 1) cursor += travel;
+    }
+    return rows;
+  }, [start, values.stops, values.inspectionMinutes, values.travelMinutes, values.breakMinutes]);
+  const copyPlan = async () => {
+    const status = capacity.remainingMinutes >= 0
+      ? `${formatDuration(capacity.remainingMinutes)} available`
+      : `${formatDuration(Math.abs(capacity.remainingMinutes))} over capacity`;
+    const text = `Field day plan: ${capacity.stops} stops | Start ${formatClockMinutes(start)} | Finish ${formatClockMinutes(plannedFinish)} | ${formatDuration(capacity.totalMinutes)} total | ${status} | Maximum ${capacity.maxStops} stops with these assumptions`;
+    try { await navigator.clipboard.writeText(text); setCopied(true); window.setTimeout(() => setCopied(false), 1800); }
+    catch { setCopied(false); }
+  };
+
+  return <section className="tool-card wide-card">
+    <div className="tool-heading heading-with-action">
+      <div className="heading-group"><div className="tool-icon orange"><Route size={24} /></div>
+        <div><p className="eyebrow">Inspection-day capacity</p><h1>Field Day Planner</h1></div></div>
+      <div className="heading-actions">
+        <button type="button" className="quiet-button" onClick={() => setValues(defaults)}><RefreshCcw size={16} />Reset</button>
+        <button type="button" className="quiet-button" onClick={copyPlan}><Copy size={16} />{copied ? "Copied" : "Copy plan"}</button>
+      </div>
+    </div>
+    <div className="planner-layout">
+      <div className="planner-inputs">
+        <label className="field"><span>First arrival</span><input type="time" value={values.startTime} onChange={(event) => update("startTime", event.target.value)} /></label>
+        <NumberField label="Workday limit" value={values.workdayHours} onChange={(value) => update("workdayHours", value)} suffix="hrs" min={0} step=".25" />
+        <NumberField label="Planned stops" value={values.stops} onChange={(value) => update("stops", value)} suffix="stops" min={0} step="1" />
+        <NumberField label="Minutes per inspection" value={values.inspectionMinutes} onChange={(value) => update("inspectionMinutes", value)} suffix="min" min={0} step="5" />
+        <NumberField label="Average drive between stops" value={values.travelMinutes} onChange={(value) => update("travelMinutes", value)} suffix="min" min={0} step="5" />
+        <NumberField label="Meal / break time" value={values.breakMinutes} onChange={(value) => update("breakMinutes", value)} suffix="min" min={0} step="5" />
+        <NumberField label="End-of-day buffer" value={values.bufferMinutes} onChange={(value) => update("bufferMinutes", value)} suffix="min" min={0} step="5" />
+      </div>
+      <aside className={`capacity-panel ${capacity.remainingMinutes < 0 ? "capacity-over" : "capacity-fit"}`} aria-live="polite">
+        <span className="decision-kicker">Capacity check</span>
+        <strong>{capacity.remainingMinutes < 0 ? "Over capacity" : "Fits the day"}</strong>
+        <p>{capacity.remainingMinutes < 0
+          ? `${formatDuration(Math.abs(capacity.remainingMinutes))} beyond the workday limit.`
+          : `${formatDuration(capacity.remainingMinutes)} remains inside the workday limit.`}</p>
+        <div><span>Planned finish</span><b>{formatClockMinutes(plannedFinish)}</b></div>
+        <div><span>Maximum stops</span><b>{capacity.maxStops}</b></div>
+      </aside>
+    </div>
+    <div className="schedule-table-wrap"><table className="schedule-table">
+      <thead><tr><th>Stop</th><th>Arrival</th><th>Inspection ends</th><th>Drive to next</th></tr></thead>
+      <tbody>{schedule.length ? schedule.map((row, index) => <tr key={row.stop}>
+        <th>Stop {row.stop}</th><td>{formatClockMinutes(row.arrival)}</td><td>{formatClockMinutes(row.departure)}</td>
+        <td>{index === schedule.length - 1 ? "—" : formatDuration(safeNonNegative(Number(values.travelMinutes)))}</td>
+      </tr>) : <tr><td colSpan={4}>Add at least one stop to build the schedule.</td></tr>}</tbody>
+    </table></div>
+    {capacity.stops > 50 && <p className="settings-note">Capacity math includes all {capacity.stops} stops; the schedule preview shows the first 50.</p>}
+    <CalculationMethod><p><strong>Total route time</strong> = stops × inspection minutes + drives between stops + break + end-of-day buffer. Maximum stops uses the same assumptions inside the workday limit. The break is placed after the middle stop in the preview; the buffer is included in the finish time.</p></CalculationMethod>
+    <p className="professional-note"><Route size={16} />Planning aid only. It does not optimize addresses, predict traffic, reserve appointment windows, or include report-writing time unless you add it to the buffer.</p>
+  </section>;
+}
+
+function RepairCostTool() {
+  const [rows, setRows] = useState(DEFAULT_REPAIRS);
+  const [contingencyPercent, setContingencyPercent] = useState(10);
+  const [area, setArea] = useState(0);
+  const [ready, setReady] = useState(false);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("mtp-repair-scope");
+      if (saved) {
+        const parsed = JSON.parse(saved) as { rows?: RepairRow[]; contingencyPercent?: number; area?: number };
+        if (Array.isArray(parsed.rows) && parsed.rows.length) setRows(parsed.rows);
+        if (Number.isFinite(parsed.contingencyPercent)) setContingencyPercent(parsed.contingencyPercent ?? 10);
+        if (Number.isFinite(parsed.area)) setArea(parsed.area ?? 0);
+      }
+    } catch { /* Storage is optional. */ }
+    setReady(true);
+  }, []);
+  useEffect(() => {
+    if (!ready) return;
+    try { localStorage.setItem("mtp-repair-scope", JSON.stringify({ rows, contingencyPercent, area })); }
+    catch { /* Storage is optional. */ }
+  }, [rows, contingencyPercent, area, ready]);
+  const result = calculateRepairEstimate(rows, contingencyPercent, area);
+  const updateRow = (id: number, key: keyof RepairRow, value: string | number) =>
+    setRows((current) => current.map((row) => row.id === id ? { ...row, [key]: value } : row));
+  const addRow = () => setRows((current) => [
+    ...current, { id: Math.max(0, ...current.map((row) => row.id)) + 1, label: "", quantity: 0, unitCost: 0 },
+  ]);
+  const copyScope = async () => {
+    const lineItems = rows
+      .filter((row) => row.label.trim() || row.quantity || row.unitCost)
+      .map((row, index) => `${row.label.trim() || `Item ${index + 1}`}: ${safeNonNegative(Number(row.quantity))} × ${money.format(safeNonNegative(Number(row.unitCost)))} = ${money.format(Math.min(Number.MAX_SAFE_INTEGER, safeNonNegative(Number(row.quantity)) * safeNonNegative(Number(row.unitCost))))}`);
+    const text = `Repair cost worksheet\n${lineItems.length ? `${lineItems.join("\n")}\n` : ""}Base: ${money.format(result.baseCost)}\nContingency (${safeNonNegative(Number(contingencyPercent))}%): ${money.format(result.contingency)}\nBudget total: ${money.format(result.totalCost)}${area > 0 ? `\nCost per square foot: ${money.format(result.costPerSquareFoot)}` : ""}`;
+    try { await navigator.clipboard.writeText(text); setCopied(true); window.setTimeout(() => setCopied(false), 1800); }
+    catch { setCopied(false); }
+  };
+
+  return <section className="tool-card wide-card">
+    <div className="tool-heading heading-with-action">
+      <div className="heading-group"><div className="tool-icon blue"><ClipboardList size={24} /></div>
+        <div><p className="eyebrow">Scope and contingency</p><h1>Repair Cost Worksheet</h1></div></div>
+      <div className="heading-actions">
+        <button type="button" className="quiet-button" onClick={() => { setRows(DEFAULT_REPAIRS); setContingencyPercent(10); setArea(0); }}><RefreshCcw size={16} />Clear</button>
+        <button type="button" className="quiet-button" onClick={copyScope}><Copy size={16} />{copied ? "Copied" : "Copy scope"}</button>
+        <button type="button" className="secondary-button" onClick={addRow}><Plus size={17} />Add item</button>
+      </div>
+    </div>
+    <div className="repair-table-wrap"><table className="repair-table">
+      <thead><tr><th>Repair or scope item</th><th>Quantity</th><th>Cost per unit</th><th>Line total</th><th><span className="sr-only">Remove</span></th></tr></thead>
+      <tbody>{rows.map((row, index) => <tr key={row.id}>
+        <td><input aria-label={`Repair item ${index + 1}`} placeholder="Describe the work" value={row.label} onChange={(event) => updateRow(row.id, "label", event.target.value)} /></td>
+        <td><input aria-label={`${row.label || `Repair item ${index + 1}`} quantity`} type="number" min="0" step="any" value={row.quantity} onChange={(event) => updateRow(row.id, "quantity", Number(event.target.value))} /></td>
+        <td><input aria-label={`${row.label || `Repair item ${index + 1}`} cost per unit`} type="number" min="0" step=".01" value={row.unitCost} onChange={(event) => updateRow(row.id, "unitCost", Number(event.target.value))} /></td>
+        <td><strong>{money.format(Math.min(Number.MAX_SAFE_INTEGER, safeNonNegative(Number(row.quantity)) * safeNonNegative(Number(row.unitCost))))}</strong></td>
+        <td>{rows.length > 1 && <button type="button" className="icon-button" aria-label={`Remove ${row.label || `repair item ${index + 1}`}`} onClick={() => setRows((current) => current.filter((item) => item.id !== row.id))}><Trash2 size={17} /></button>}</td>
+      </tr>)}</tbody>
+    </table></div>
+    <div className="repair-settings">
+      <NumberField label="Contingency" value={contingencyPercent} onChange={setContingencyPercent} suffix="%" min={0} step="1" />
+      <NumberField label="Optional project area" value={area} onChange={setArea} suffix="sf" min={0} step="1" />
+      <p>Use quantity as rooms, items, square feet, or another consistent unit. Enter zero area to omit the per-square-foot result.</p>
+    </div>
+    <div className="result-row four-results" aria-live="polite">
+      <ResultStat label="Base repair cost" value={money.format(result.baseCost)} />
+      <ResultStat label="Contingency" value={money.format(result.contingency)} tone="orange" />
+      <ResultStat label="Budget total" value={money.format(result.totalCost)} tone="blue" />
+      <ResultStat label="Cost per square foot" value={area > 0 ? money.format(result.costPerSquareFoot) : "Add area"} />
+    </div>
+    <CalculationMethod><p><strong>Base cost</strong> = the sum of quantity × unit cost for every row. Contingency = base cost × contingency percentage. Cost per square foot divides the total, including contingency, by the optional project area. Negative or nonnumeric entries are treated as zero.</p></CalculationMethod>
+    <p className="professional-note"><ClipboardList size={16} />Early budgeting aid only—not a contractor bid, appraisal adjustment, inspection finding, code review, or permit opinion. Verify scope, quantities, labor, materials, taxes, and local requirements with qualified professionals.</p>
   </section>;
 }
 
@@ -810,6 +1016,8 @@ export default function HomePage() {
         {activeTool === "wages" && <WageTool rate={rate} setRate={setRate} />}
         {activeTool === "payroll" && <PayrollTool />}
         {activeTool === "proration" && <TaxProrationTool />}
+        {activeTool === "fieldday" && <FieldDayTool />}
+        {activeTool === "repairs" && <RepairCostTool />}
         {activeTool === "market" && <MarketTool />}
         {activeTool === "gla" && <GlaTool />}
         {activeTool === "convert" && <ConvertTool />}
@@ -818,7 +1026,7 @@ export default function HomePage() {
         {activeTool === "mileage" && <MileageTool />}
         {activeTool === "turnaround" && <TurnaroundTool />}
         {activeTool === "quote" && <QuoteTool />}
-        <footer className="site-footer"><span>MyToolPage v0.4.1 · 12 tools</span><span>Practical tools for real work.</span></footer>
+        <footer className="site-footer"><span>MyToolPage v0.5.0 · 14 tools</span><span>Practical tools for real work.</span></footer>
       </div>
     </div>
   </main>;

@@ -29,3 +29,42 @@ test("tax proration handles leap years and closing-day conventions", () => {
   assert.equal(throughClosing.sellerDays, 61);
   assert.equal(throughClosing.sellerShare, 610);
 });
+
+test("field day capacity includes only drives between stops", () => {
+  assert.deepEqual(calculators.calculateFieldDayCapacity(510, 10, 30, 25, 30, 30), {
+    stops: 10,
+    totalMinutes: 585,
+    maxStops: 8,
+    remainingMinutes: -75,
+  });
+  assert.deepEqual(calculators.calculateFieldDayCapacity(0, 0, 0, 0, 0, 0), {
+    stops: 0,
+    totalMinutes: 0,
+    maxStops: 0,
+    remainingMinutes: 0,
+  });
+  assert.ok(Number.isFinite(calculators.calculateFieldDayCapacity(1e308, 1e308, 1e308, 1e308, 1e308, 1e308).totalMinutes));
+});
+
+test("repair estimate adds contingency and safely handles zero area", () => {
+  assert.deepEqual(calculators.calculateRepairEstimate([
+    { quantity: 2, unitCost: 100 },
+    { quantity: 3, unitCost: 50 },
+  ], 10, 770), {
+    baseCost: 350,
+    contingency: 35,
+    totalCost: 385,
+    costPerSquareFoot: .5,
+  });
+  assert.deepEqual(calculators.calculateRepairEstimate([
+    { quantity: -2, unitCost: 100 },
+  ], -10, 0), {
+    baseCost: 0,
+    contingency: 0,
+    totalCost: 0,
+    costPerSquareFoot: 0,
+  });
+  assert.ok(Number.isFinite(calculators.calculateRepairEstimate([
+    { quantity: 1e308, unitCost: 1e308 },
+  ], 1e308, 1).totalCost));
+});

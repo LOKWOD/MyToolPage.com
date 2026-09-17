@@ -7,6 +7,10 @@ export type WageTotals = {
 
 const safeNumber = (value: number) => Number.isFinite(value) ? value : 0;
 const nonNegative = (value: number) => Math.max(0, safeNumber(value));
+const boundedNonNegative = (value: number) => Math.min(Number.MAX_SAFE_INTEGER, nonNegative(value));
+const boundedResult = (value: number) => Number.isFinite(value)
+  ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, value))
+  : Number.MAX_SAFE_INTEGER;
 
 export function calculateWages(
   hours: number[],
@@ -58,4 +62,58 @@ export function calculateTaxProration(annualTaxes: number, closingDate: string, 
   const taxes = nonNegative(annualTaxes);
   const dailyRate = taxes / daysInYear;
   return { daysInYear, sellerDays, buyerDays, dailyRate, sellerShare: dailyRate * sellerDays, buyerShare: dailyRate * buyerDays };
+}
+
+export function calculateFieldDayCapacity(
+  workdayMinutes: number,
+  requestedStops: number,
+  inspectionMinutes: number,
+  betweenStopMinutes: number,
+  breakMinutes: number,
+  bufferMinutes: number,
+) {
+  const day = boundedNonNegative(workdayMinutes);
+  const stops = Math.floor(boundedNonNegative(requestedStops));
+  const inspection = boundedNonNegative(inspectionMinutes);
+  const travel = boundedNonNegative(betweenStopMinutes);
+  const breaks = boundedNonNegative(breakMinutes);
+  const buffer = boundedNonNegative(bufferMinutes);
+  const totalMinutes = stops === 0
+    ? 0
+    : boundedResult(stops * inspection + Math.max(0, stops - 1) * travel + breaks + buffer);
+  const usableMinutes = Math.max(0, day - breaks - buffer);
+  const maxStops = inspection <= 0 || usableMinutes < inspection
+    ? 0
+    : 1 + Math.floor((usableMinutes - inspection) / (inspection + travel));
+  return {
+    stops,
+    totalMinutes,
+    maxStops: boundedResult(maxStops),
+    remainingMinutes: day - totalMinutes,
+  };
+}
+
+export type RepairCostInput = {
+  quantity: number;
+  unitCost: number;
+};
+
+export function calculateRepairEstimate(
+  rows: RepairCostInput[],
+  contingencyPercent: number,
+  areaSquareFeet: number,
+) {
+  const baseCost = rows.reduce(
+    (sum, row) => boundedResult(sum + boundedNonNegative(row.quantity) * boundedNonNegative(row.unitCost)),
+    0,
+  );
+  const contingency = boundedResult(baseCost * boundedNonNegative(contingencyPercent) / 100);
+  const totalCost = boundedResult(baseCost + contingency);
+  const area = boundedNonNegative(areaSquareFeet);
+  return {
+    baseCost,
+    contingency,
+    totalCost,
+    costPerSquareFoot: area > 0 ? totalCost / area : 0,
+  };
 }

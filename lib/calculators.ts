@@ -117,3 +117,100 @@ export function calculateRepairEstimate(
     costPerSquareFoot: area > 0 ? totalCost / area : 0,
   };
 }
+
+export type PairedSaleInput = {
+  priceA: number;
+  priceB: number;
+  featureA: number;
+  featureB: number;
+  otherDifference: number;
+};
+
+export function calculatePairedSales(rows: PairedSaleInput[]) {
+  const indications = rows.map((row) => {
+    const priceDifference = safeNumber(row.priceA) - safeNumber(row.priceB);
+    const featureDifference = safeNumber(row.featureA) - safeNumber(row.featureB);
+    const unexplainedDifference = priceDifference - safeNumber(row.otherDifference);
+    const unitAdjustment = featureDifference === 0 ? null : unexplainedDifference / featureDifference;
+    return {
+      priceDifference,
+      featureDifference,
+      unexplainedDifference,
+      unitAdjustment: unitAdjustment !== null && Number.isFinite(unitAdjustment) ? unitAdjustment : null,
+    };
+  });
+  const valid = indications
+    .map((row) => row.unitAdjustment)
+    .filter((value): value is number => value !== null)
+    .sort((a, b) => a - b);
+  const middle = Math.floor(valid.length / 2);
+  const median = valid.length === 0 ? 0
+    : valid.length % 2 ? valid[middle] : (valid[middle - 1] + valid[middle]) / 2;
+  return {
+    indications,
+    validPairs: valid.length,
+    median,
+    low: valid.length ? valid[0] : 0,
+    high: valid.length ? valid[valid.length - 1] : 0,
+  };
+}
+
+export function calculateBreakEvenRate(
+  ownerPay: number,
+  overhead: number,
+  labor: number,
+  reservePercent: number,
+  profitMarginPercent: number,
+  billableWeeks: number,
+  billableHoursPerWeek: number,
+  assignmentsPerWeek: number,
+) {
+  const baseCost = boundedResult(
+    boundedNonNegative(ownerPay) + boundedNonNegative(overhead) + boundedNonNegative(labor),
+  );
+  const reserve = boundedResult(baseCost * boundedNonNegative(reservePercent) / 100);
+  const preProfitRevenue = boundedResult(baseCost + reserve);
+  const margin = Math.min(99.9, boundedNonNegative(profitMarginPercent)) / 100;
+  const annualRevenue = preProfitRevenue === 0 ? 0 : boundedResult(preProfitRevenue / (1 - margin));
+  const annualHours = boundedResult(boundedNonNegative(billableWeeks) * boundedNonNegative(billableHoursPerWeek));
+  const annualAssignments = boundedResult(boundedNonNegative(billableWeeks) * boundedNonNegative(assignmentsPerWeek));
+  return {
+    baseCost,
+    reserve,
+    annualRevenue,
+    hourlyRate: annualHours > 0 ? annualRevenue / annualHours : 0,
+    assignmentRate: annualAssignments > 0 ? annualRevenue / annualAssignments : 0,
+  };
+}
+
+export function calculateSellerNet(
+  salePrice: number,
+  mortgagePayoff: number,
+  commissionPercent: number,
+  transferTaxes: number,
+  attorneyAndTitle: number,
+  sellerCredits: number,
+  repairs: number,
+  otherCosts: number,
+) {
+  const price = boundedNonNegative(salePrice);
+  const payoff = boundedNonNegative(mortgagePayoff);
+  const commissionRate = Math.min(100, boundedNonNegative(commissionPercent)) / 100;
+  const commission = boundedResult(price * commissionRate);
+  const fixedCosts = boundedResult(
+    boundedNonNegative(transferTaxes) + boundedNonNegative(attorneyAndTitle)
+      + boundedNonNegative(sellerCredits) + boundedNonNegative(repairs) + boundedNonNegative(otherCosts),
+  );
+  const sellingCosts = boundedResult(commission + fixedCosts);
+  const netProceeds = safeNumber(price - payoff - sellingCosts);
+  const breakEvenPrice = commissionRate >= 1
+    ? 0 : boundedResult((payoff + fixedCosts) / (1 - commissionRate));
+  return {
+    commission,
+    fixedCosts,
+    sellingCosts,
+    netProceeds,
+    breakEvenPrice,
+    sellingCostPercent: price > 0 ? sellingCosts / price * 100 : 0,
+  };
+}

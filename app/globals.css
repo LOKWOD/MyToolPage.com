@@ -221,6 +221,21 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .adjusted-row th, .adjusted-row td { background: var(--ink); color: white; font-size: 14px; font-weight: 900; }
 .adjusted-row th:first-child { background: var(--ink); }
 
+.paired-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 13px; background: white; }
+.paired-table { width: 100%; min-width: 1100px; border-collapse: collapse; font-size: 12px; }
+.paired-table th, .paired-table td { min-width: 126px; padding: 9px 7px; border-right: 1px solid #e2e3df; border-bottom: 1px solid #e2e3df; text-align: left; }
+.paired-table th { background: #f4f6f7; color: var(--muted); font-size: 10px; letter-spacing: .05em; text-transform: uppercase; }
+.paired-table th:first-child, .paired-table td:first-child { min-width: 135px; }
+.paired-table th:nth-child(6), .paired-table td:nth-child(6) { min-width: 185px; }
+.paired-table th:nth-child(7), .paired-table td:nth-child(7) { min-width: 155px; }
+.paired-table th:last-child, .paired-table td:last-child { min-width: 52px; border-right: 0; text-align: center; }
+.paired-table tbody tr:last-child td { border-bottom: 0; }
+.paired-table input { width: 100%; min-height: 38px; border: 1px solid #ced3d5; border-radius: 7px; background: white; color: var(--ink); padding: 7px 8px; font-weight: 750; text-align: right; }
+.paired-table td:first-child input { text-align: left; }
+.paired-table td:nth-child(7) { font-variant-numeric: tabular-nums; }
+.paired-table td:nth-child(7) strong { overflow-wrap: anywhere; }
+.paired-table .icon-button { margin: 0 auto; }
+
 .fee-iq-layout { display: grid; grid-template-columns: minmax(0,1fr) 300px; gap: 18px; align-items: stretch; }
 .fee-input-panel { padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: #fafaf8; }
 .fee-input-panel h2 { margin: 0 0 17px; font-size: 17px; }

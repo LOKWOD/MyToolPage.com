@@ -5,7 +5,7 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://mytoolpage.com"),
   title: "MyToolPage | Practical Tools for Real Work",
   description:
-    "Fourteen free time, wage, field-day, repair-cost, property, business, and real estate appraisal calculators in one searchable toolbox.",
+    "Seventeen free time, wage, pricing, property, business, and real estate appraisal calculators in one searchable toolbox.",
   applicationName: "MyToolPage",
   alternates: { canonical: "/" },
   robots: { index: true, follow: true },
@@ -14,7 +14,7 @@ export const metadata: Metadata = {
     url: "/",
     siteName: "MyToolPage",
     title: "MyToolPage | Practical Tools for Real Work",
-    description: "Fourteen free calculators and planning worksheets for workers, business owners, property professionals, and residential appraisers.",
+    description: "Seventeen free calculators and planning worksheets for workers, business owners, property professionals, and residential appraisers.",
   },
   other: { "codex-preview": "development" },
   icons: {
@@ -42,12 +42,13 @@ export default function RootLayout({
     applicationCategory: "BusinessApplication",
     operatingSystem: "Any",
     isAccessibleForFree: true,
-    description: "A searchable collection of fourteen free calculators and worksheets for work, property, and appraisal tasks.",
+    description: "A searchable collection of seventeen free calculators and worksheets for work, property, and appraisal tasks.",
     featureList: [
       "Time clock", "Wage calculator", "Worker payout sheet", "Property tax proration",
-      "Field day planner", "Repair cost worksheet", "Market-condition adjustment",
+      "Seller net sheet", "Field day planner", "Repair cost worksheet", "Market-condition adjustment",
       "GLA worksheet", "Property converter", "Comparable adjustment grid",
-      "Assignment fee analysis", "Trip cost calculator", "Turnaround planner",
+      "Paired sales support", "Assignment fee analysis", "Break-even billing rate",
+      "Trip cost calculator", "Turnaround planner",
       "Appraisal fee builder",
     ],
   };

@@ -68,3 +68,42 @@ test("repair estimate adds contingency and safely handles zero area", () => {
     { quantity: 1e308, unitCost: 1e308 },
   ], 1e308, 1).totalCost));
 });
+
+test("paired sales reports usable unit indications and a median", () => {
+  const result = calculators.calculatePairedSales([
+    { priceA: 400000, priceB: 370000, featureA: 2, featureB: 1, otherDifference: 5000 },
+    { priceA: 510000, priceB: 470000, featureA: 3, featureB: 1, otherDifference: 0 },
+    { priceA: 300000, priceB: 300000, featureA: 1, featureB: 1, otherDifference: 0 },
+  ]);
+  assert.equal(result.indications[0].unitAdjustment, 25000);
+  assert.equal(result.indications[1].unitAdjustment, 20000);
+  assert.equal(result.indications[2].unitAdjustment, null);
+  assert.deepEqual({ validPairs: result.validPairs, low: result.low, median: result.median, high: result.high }, {
+    validPairs: 2, low: 20000, median: 22500, high: 25000,
+  });
+});
+
+test("break-even rate converts annual costs to hourly and assignment floors", () => {
+  assert.deepEqual(calculators.calculateBreakEvenRate(100000, 50000, 50000, 10, 20, 50, 20, 5), {
+    baseCost: 200000,
+    reserve: 20000,
+    annualRevenue: 275000,
+    hourlyRate: 275,
+    assignmentRate: 1100,
+  });
+  assert.deepEqual(calculators.calculateBreakEvenRate(0, 0, 0, 0, 0, 0, 0, 0), {
+    baseCost: 0, reserve: 0, annualRevenue: 0, hourlyRate: 0, assignmentRate: 0,
+  });
+  assert.ok(Number.isFinite(calculators.calculateBreakEvenRate(1e308, 1e308, 1e308, 1e308, 1e308, 1e308, 1e308, 1e308).annualRevenue));
+});
+
+test("seller net sheet totals costs and solves the break-even sale price", () => {
+  const result = calculators.calculateSellerNet(500000, 250000, 5, 5000, 3000, 10000, 7000, 0);
+  assert.equal(result.commission, 25000);
+  assert.equal(result.fixedCosts, 25000);
+  assert.equal(result.sellingCosts, 50000);
+  assert.equal(result.netProceeds, 200000);
+  assert.ok(Math.abs(result.breakEvenPrice - 289473.6842105263) < .001);
+  assert.equal(result.sellingCostPercent, 10);
+  assert.equal(calculators.calculateSellerNet(100000, 150000, 0, 0, 0, 0, 0, 0).netProceeds, -50000);
+});

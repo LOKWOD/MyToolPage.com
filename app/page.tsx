@@ -17,13 +17,15 @@ import {
 } from "react";
 import {
   calculateFieldDayCapacity, calculateRepairEstimate, calculateTaxProration,
+  calculateBreakEvenRate, calculatePairedSales, calculateSellerNet,
   calculateWages, calculateWorkerPay,
 } from "@/lib/calculators";
 
-type ToolId = "clock" | "wages" | "payroll" | "proration" | "fieldday" | "repairs" | "market" | "gla" | "convert" | "grid" | "fee" | "mileage" | "turnaround" | "quote";
+type ToolId = "clock" | "wages" | "payroll" | "proration" | "netsheet" | "fieldday" | "repairs" | "market" | "gla" | "convert" | "grid" | "paired" | "fee" | "breakeven" | "mileage" | "turnaround" | "quote";
 type TimeRow = { day: string; start: string; end: string; breakMinutes: number };
 type WorkerRow = { id: number; name: string; hours: number; rate: number; extra: number; deduction: number };
 type RepairRow = { id: number; label: string; quantity: number; unitCost: number };
+type PairedRow = { id: number; label: string; priceA: number; priceB: number; featureA: number; featureB: number; otherDifference: number };
 type AreaRow = { id: number; label: string; length: number; width: number; count: number };
 type GridProperty = {
   gla: number; siteAcres: number; age: number; beds: number;
@@ -42,13 +44,16 @@ const TOOLS = [
   { id: "wages" as const, label: "Wage Calculator", short: "Wages", icon: CircleDollarSign, description: "Total 1-day, 3-day, or weekly hours and gross pay" },
   { id: "payroll" as const, label: "Worker Payout Sheet", short: "Payouts", icon: Users, description: "Total a daily or multi-day payment batch" },
   { id: "proration" as const, label: "Tax Proration", short: "Proration", icon: CalendarDays, description: "Split annual property taxes at closing" },
+  { id: "netsheet" as const, label: "Seller Net Sheet", short: "Seller Net", icon: Home, description: "Estimate sale proceeds and break-even price" },
   { id: "fieldday" as const, label: "Field Day Planner", short: "Field Day", icon: Route, description: "Test inspection-day capacity and build a stop schedule" },
   { id: "repairs" as const, label: "Repair Cost Worksheet", short: "Repairs", icon: ClipboardList, description: "Build a repair scope with contingency and cost per square foot" },
   { id: "market" as const, label: "Market Adjustment", short: "Market", icon: TrendingUp, description: "Calculate a supported time adjustment" },
   { id: "gla" as const, label: "GLA Worksheet", short: "GLA", icon: Ruler, description: "Build rectangular areas and total GLA" },
   { id: "convert" as const, label: "Property Converter", short: "Convert", icon: Calculator, description: "Convert land, distance, and price per square foot" },
   { id: "grid" as const, label: "Comp Adjustment Grid", short: "Comp Grid", icon: TableProperties, description: "Run side-by-side comparable adjustments" },
+  { id: "paired" as const, label: "Paired Sales Support", short: "Paired Sales", icon: SlidersHorizontal, description: "Extract and compare unit-adjustment indications" },
   { id: "fee" as const, label: "Assignment Fee IQ", short: "Fee IQ", icon: BadgeDollarSign, description: "Measure assignment profit and quote the right fee" },
+  { id: "breakeven" as const, label: "Break-Even Billing Rate", short: "Break-Even", icon: CircleDollarSign, description: "Convert annual costs and targets into a billing floor" },
   { id: "mileage" as const, label: "Trip Cost Calculator", short: "Trip Cost", icon: MapPinned, description: "Price fuel, vehicle wear, tolls, and travel time" },
   { id: "turnaround" as const, label: "Turnaround Planner", short: "Turnaround", icon: CalendarClock, description: "Calculate a delivery date in business days" },
   { id: "quote" as const, label: "Appraisal Fee Builder", short: "Fee Builder", icon: ReceiptText, description: "Build a defensible assignment quote" },
@@ -68,6 +73,12 @@ const DEFAULT_REPAIRS: RepairRow[] = [
   { id: 1, label: "", quantity: 0, unitCost: 0 },
   { id: 2, label: "", quantity: 0, unitCost: 0 },
   { id: 3, label: "", quantity: 0, unitCost: 0 },
+];
+
+const DEFAULT_PAIRS: PairedRow[] = [
+  { id: 1, label: "Pair 1", priceA: 0, priceB: 0, featureA: 0, featureB: 0, otherDifference: 0 },
+  { id: 2, label: "Pair 2", priceA: 0, priceB: 0, featureA: 0, featureB: 0, otherDifference: 0 },
+  { id: 3, label: "Pair 3", priceA: 0, priceB: 0, featureA: 0, featureB: 0, otherDifference: 0 },
 ];
 
 const DEFAULT_AREAS: AreaRow[] = [
@@ -197,7 +208,7 @@ function ResultStat({ label, value, tone }: {
 function CalculationMethod({ children }: { children: ReactNode }) {
   return <details className="calculation-method">
     <summary>How this calculator works</summary>
-    <div>{children}<small>Method reviewed September 17, 2026.</small></div>
+    <div>{children}<small>Method reviewed September 18, 2026.</small></div>
   </details>;
 }
 
@@ -505,6 +516,58 @@ function TaxProrationTool() {
     </div>
     <CalculationMethod><p><strong>Daily rate</strong> = annual taxes ÷ 365, or ÷ 366 in a leap year. Seller share = daily rate × seller days; buyer share uses the remaining days. The closing-day choice moves one day between the parties without changing the annual total.</p></CalculationMethod>
     <p className="professional-note"><CalendarDays size={16} />Assumes calendar-year taxes accrue evenly across {result.daysInYear || 365} days. Confirm the tax period, local custom, contract language, exemptions, credits, and final settlement figures with the closing professional.</p>
+  </section>;
+}
+
+function SellerNetTool() {
+  const defaults = {
+    salePrice: 0, mortgagePayoff: 0, commissionPercent: 0, transferTaxes: 0,
+    attorneyAndTitle: 0, sellerCredits: 0, repairs: 0, otherCosts: 0,
+  };
+  const [values, setValues] = useState(defaults);
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("mtp-seller-net");
+      if (saved) setValues((current) => ({ ...current, ...JSON.parse(saved) }));
+    } catch { /* Storage is optional. */ }
+    setReady(true);
+  }, []);
+  useEffect(() => {
+    if (!ready) return;
+    try { localStorage.setItem("mtp-seller-net", JSON.stringify(values)); }
+    catch { /* Storage is optional. */ }
+  }, [values, ready]);
+  const update = (key: keyof typeof values, value: number) =>
+    setValues((current) => ({ ...current, [key]: value }));
+  const result = calculateSellerNet(
+    values.salePrice, values.mortgagePayoff, values.commissionPercent, values.transferTaxes,
+    values.attorneyAndTitle, values.sellerCredits, values.repairs, values.otherCosts,
+  );
+  return <section className="tool-card wide-card">
+    <div className="tool-heading heading-with-action">
+      <div className="heading-group"><div className="tool-icon blue"><Home size={24} /></div>
+        <div><p className="eyebrow">Sale proceeds planning</p><h1>Seller Net Sheet</h1></div></div>
+      <button type="button" className="quiet-button" onClick={() => setValues(defaults)}><RefreshCcw size={16} />Clear</button>
+    </div>
+    <div className="market-grid">
+      <NumberField label="Expected sale price" value={values.salePrice} onChange={(value) => update("salePrice", value)} prefix="$" min={0} step="1000" />
+      <NumberField label="Mortgage / lien payoff" value={values.mortgagePayoff} onChange={(value) => update("mortgagePayoff", value)} prefix="$" min={0} step="1000" />
+      <NumberField label="Broker compensation" value={values.commissionPercent} onChange={(value) => update("commissionPercent", value)} suffix="%" min={0} step=".1" />
+      <NumberField label="Transfer taxes / recording" value={values.transferTaxes} onChange={(value) => update("transferTaxes", value)} prefix="$" min={0} step="100" />
+      <NumberField label="Attorney / title / closing" value={values.attorneyAndTitle} onChange={(value) => update("attorneyAndTitle", value)} prefix="$" min={0} step="100" />
+      <NumberField label="Seller credits" value={values.sellerCredits} onChange={(value) => update("sellerCredits", value)} prefix="$" min={0} step="100" />
+      <NumberField label="Repairs / preparation" value={values.repairs} onChange={(value) => update("repairs", value)} prefix="$" min={0} step="100" />
+      <NumberField label="Other selling costs" value={values.otherCosts} onChange={(value) => update("otherCosts", value)} prefix="$" min={0} step="100" />
+    </div>
+    <div className="result-row four-results" aria-live="polite">
+      <ResultStat label="Estimated net proceeds" value={money.format(result.netProceeds)} tone={result.netProceeds >= 0 ? "blue" : "orange"} />
+      <ResultStat label="Selling costs" value={money.format(result.sellingCosts)} />
+      <ResultStat label="Selling-cost share" value={`${result.sellingCostPercent.toFixed(2)}%`} />
+      <ResultStat label="Break-even sale price" value={money.format(result.breakEvenPrice)} tone="orange" />
+    </div>
+    <CalculationMethod><p><strong>Estimated net</strong> = sale price − payoff − percentage-based broker compensation − entered fixed costs. Break-even price solves for the sale price that covers the payoff and fixed costs after the entered broker percentage.</p></CalculationMethod>
+    <p className="professional-note"><Home size={16} />Planning estimate only—not a closing disclosure, tax calculation, legal opinion, payoff statement, or broker quote. Confirm commissions, liens, prorations, transfer taxes, credits, and closing charges with the responsible professionals.</p>
   </section>;
 }
 
@@ -864,6 +927,67 @@ function CompGridTool() {
   </section>;
 }
 
+function PairedSalesTool() {
+  const [rows, setRows] = useState(DEFAULT_PAIRS);
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("mtp-paired-sales");
+      if (saved) {
+        const parsed = JSON.parse(saved) as PairedRow[];
+        if (Array.isArray(parsed) && parsed.length) setRows(parsed);
+      }
+    } catch { /* Storage is optional. */ }
+    setReady(true);
+  }, []);
+  useEffect(() => {
+    if (!ready) return;
+    try { localStorage.setItem("mtp-paired-sales", JSON.stringify(rows)); }
+    catch { /* Storage is optional. */ }
+  }, [rows, ready]);
+  const result = calculatePairedSales(rows);
+  const updateRow = (id: number, key: keyof PairedRow, value: string | number) =>
+    setRows((current) => current.map((row) => row.id === id ? { ...row, [key]: value } : row));
+  const addRow = () => setRows((current) => {
+    const id = Math.max(0, ...current.map((row) => row.id)) + 1;
+    return [...current, { id, label: `Pair ${current.length + 1}`, priceA: 0, priceB: 0, featureA: 0, featureB: 0, otherDifference: 0 }];
+  });
+  return <section className="tool-card wide-card">
+    <div className="tool-heading heading-with-action">
+      <div className="heading-group"><div className="tool-icon orange"><SlidersHorizontal size={24} /></div>
+        <div><p className="eyebrow">Market-evidence worksheet</p><h1>Paired Sales Support</h1></div></div>
+      <div className="heading-actions">
+        <button type="button" className="quiet-button" onClick={() => setRows(DEFAULT_PAIRS)}><RefreshCcw size={16} />Clear</button>
+        <button type="button" className="secondary-button" onClick={addRow}><Plus size={17} />Add pair</button>
+      </div>
+    </div>
+    <div className="paired-table-wrap"><table className="paired-table">
+      <thead><tr><th>Pair</th><th>Sale A price</th><th>Sale B price</th><th>A feature units</th><th>B feature units</th><th>Other explained difference</th><th>Indicated $ / unit</th><th><span className="sr-only">Remove</span></th></tr></thead>
+      <tbody>{rows.map((row, index) => {
+        const indication = result.indications[index];
+        return <tr key={row.id}>
+          <td><input aria-label={`Pair ${index + 1} label`} value={row.label} onChange={(event) => updateRow(row.id, "label", event.target.value)} /></td>
+          <td><input aria-label={`${row.label} sale A price`} type="number" min="0" step="1000" value={row.priceA} onChange={(event) => updateRow(row.id, "priceA", Number(event.target.value))} /></td>
+          <td><input aria-label={`${row.label} sale B price`} type="number" min="0" step="1000" value={row.priceB} onChange={(event) => updateRow(row.id, "priceB", Number(event.target.value))} /></td>
+          <td><input aria-label={`${row.label} sale A feature units`} type="number" step="any" value={row.featureA} onChange={(event) => updateRow(row.id, "featureA", Number(event.target.value))} /></td>
+          <td><input aria-label={`${row.label} sale B feature units`} type="number" step="any" value={row.featureB} onChange={(event) => updateRow(row.id, "featureB", Number(event.target.value))} /></td>
+          <td><input aria-label={`${row.label} other explained price difference`} type="number" step="1000" value={row.otherDifference} onChange={(event) => updateRow(row.id, "otherDifference", Number(event.target.value))} /></td>
+          <td><strong>{indication.unitAdjustment === null ? "Need unit difference" : signedMoney(indication.unitAdjustment)}</strong></td>
+          <td>{rows.length > 1 && <button type="button" className="icon-button" aria-label={`Remove ${row.label}`} onClick={() => setRows((current) => current.filter((item) => item.id !== row.id))}><Trash2 size={17} /></button>}</td>
+        </tr>;
+      })}</tbody>
+    </table></div>
+    <div className="result-row four-results" aria-live="polite">
+      <ResultStat label="Usable pairs" value={String(result.validPairs)} />
+      <ResultStat label="Low indication" value={signedMoney(result.low)} />
+      <ResultStat label="Median indication" value={signedMoney(result.median)} tone="blue" />
+      <ResultStat label="High indication" value={signedMoney(result.high)} />
+    </div>
+    <CalculationMethod><p>For each row, <strong>indicated adjustment per unit</strong> = (Sale A price − Sale B price − price difference already explained by other features) ÷ (Sale A feature units − Sale B feature units). Rows with no feature-unit difference are excluded. The center result is the statistical median of the usable indications.</p></CalculationMethod>
+    <p className="professional-note"><Hammer size={16} />Analytical support only—not a market-derived conclusion by itself. Confirm that each pair is genuinely comparable, verify transaction data, support other-feature differences, investigate outliers, and reconcile the evidence using appraisal judgment.</p>
+  </section>;
+}
+
 function FeeIqTool() {
   const [values, setValues] = useState({
     fee: 650, roundTripMiles: 55, driveHours: 1.25, inspectionHours: .75,
@@ -928,6 +1052,56 @@ function FeeIqTool() {
     </div>
     <div className="fee-breakdown"><span>Vehicle cost <strong>{money.format(vehicleCost)}</strong></span><span>Fee after direct costs <strong>{money.format(contribution)}</strong></span><span>Gap to target <strong>{money.format(Math.max(0, targetFee - values.fee))}</strong></span></div>
     <p className="professional-note"><CircleDollarSign size={16} />Profitability screen before taxes and general overhead. Change the target and cost assumptions to match your business.</p>
+  </section>;
+}
+
+function BreakEvenTool() {
+  const [values, setValues] = useState({
+    ownerPay: 0, overhead: 0, labor: 0, reservePercent: 10,
+    profitMarginPercent: 15, billableWeeks: 48, billableHoursPerWeek: 25, assignmentsPerWeek: 5,
+  });
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("mtp-break-even-rate");
+      if (saved) setValues((current) => ({ ...current, ...JSON.parse(saved) }));
+    } catch { /* Storage is optional. */ }
+    setReady(true);
+  }, []);
+  useEffect(() => {
+    if (!ready) return;
+    try { localStorage.setItem("mtp-break-even-rate", JSON.stringify(values)); }
+    catch { /* Storage is optional. */ }
+  }, [values, ready]);
+  const update = (key: keyof typeof values, value: number) => setValues((current) => ({ ...current, [key]: value }));
+  const result = calculateBreakEvenRate(
+    values.ownerPay, values.overhead, values.labor, values.reservePercent,
+    values.profitMarginPercent, values.billableWeeks, values.billableHoursPerWeek, values.assignmentsPerWeek,
+  );
+  return <section className="tool-card wide-card">
+    <div className="tool-heading heading-with-action">
+      <div className="heading-group"><div className="tool-icon blue"><CircleDollarSign size={24} /></div>
+        <div><p className="eyebrow">Service-business pricing</p><h1>Break-Even Billing Rate</h1></div></div>
+      <button type="button" className="quiet-button" onClick={() => setValues({ ownerPay: 0, overhead: 0, labor: 0, reservePercent: 10, profitMarginPercent: 15, billableWeeks: 48, billableHoursPerWeek: 25, assignmentsPerWeek: 5 })}><RefreshCcw size={16} />Clear</button>
+    </div>
+    <div className="market-grid">
+      <NumberField label="Owner pay target" value={values.ownerPay} onChange={(value) => update("ownerPay", value)} prefix="$" step="1000" min={0} />
+      <NumberField label="Annual overhead" value={values.overhead} onChange={(value) => update("overhead", value)} prefix="$" step="1000" min={0} />
+      <NumberField label="Annual labor / contractors" value={values.labor} onChange={(value) => update("labor", value)} prefix="$" step="1000" min={0} />
+      <NumberField label="Reserve for surprises" value={values.reservePercent} onChange={(value) => update("reservePercent", value)} suffix="%" step="1" min={0} />
+      <NumberField label="Target profit margin" value={values.profitMarginPercent} onChange={(value) => update("profitMarginPercent", value)} suffix="%" step="1" min={0} />
+      <NumberField label="Billable weeks / year" value={values.billableWeeks} onChange={(value) => update("billableWeeks", value)} suffix="weeks" step="1" min={0} />
+      <NumberField label="Billable hours / week" value={values.billableHoursPerWeek} onChange={(value) => update("billableHoursPerWeek", value)} suffix="hrs" step="1" min={0} />
+      <NumberField label="Assignments / week" value={values.assignmentsPerWeek} onChange={(value) => update("assignmentsPerWeek", value)} suffix="jobs" step="1" min={0} />
+    </div>
+    <div className="result-row four-results" aria-live="polite">
+      <ResultStat label="Annual revenue target" value={money.format(result.annualRevenue)} tone="blue" />
+      <ResultStat label="Minimum billable hour" value={`${money.format(result.hourlyRate)}/hr`} tone="orange" />
+      <ResultStat label="Minimum average assignment" value={money.format(result.assignmentRate)} />
+      <ResultStat label="Reserve included" value={money.format(result.reserve)} />
+    </div>
+    <CalculationMethod><p><strong>Annual revenue target</strong> = (owner pay + overhead + labor + reserve) ÷ (1 − target profit margin). Hourly and assignment floors divide that target by the entered annual billable capacity. The profit margin is a percentage of revenue, not a markup on cost.</p></CalculationMethod>
+    <p className="professional-note"><CircleDollarSign size={16} />Planning estimate before income tax. Verify every annual cost, allow for unbillable time and collection losses, and compare the result with market conditions before setting prices.</p>
   </section>;
 }
 
@@ -1016,17 +1190,20 @@ export default function HomePage() {
         {activeTool === "wages" && <WageTool rate={rate} setRate={setRate} />}
         {activeTool === "payroll" && <PayrollTool />}
         {activeTool === "proration" && <TaxProrationTool />}
+        {activeTool === "netsheet" && <SellerNetTool />}
         {activeTool === "fieldday" && <FieldDayTool />}
         {activeTool === "repairs" && <RepairCostTool />}
         {activeTool === "market" && <MarketTool />}
         {activeTool === "gla" && <GlaTool />}
         {activeTool === "convert" && <ConvertTool />}
         {activeTool === "grid" && <CompGridTool />}
+        {activeTool === "paired" && <PairedSalesTool />}
         {activeTool === "fee" && <FeeIqTool />}
+        {activeTool === "breakeven" && <BreakEvenTool />}
         {activeTool === "mileage" && <MileageTool />}
         {activeTool === "turnaround" && <TurnaroundTool />}
         {activeTool === "quote" && <QuoteTool />}
-        <footer className="site-footer"><span>MyToolPage v0.5.0 · 14 tools</span><span>Practical tools for real work.</span></footer>
+        <footer className="site-footer"><span>MyToolPage v0.6.0 · 17 tools</span><span>Practical tools for real work.</span></footer>
       </div>
     </div>
   </main>;

@@ -43,6 +43,8 @@ test("publishes canonical discovery metadata, sitemap, and robots rules", async 
   assert.match(html, /rel="canonical" href="https:\/\/mytoolpage\.com\/"/);
   assert.match(html, /"@type":"WebApplication"/);
   assert.match(html, /Field day planner/);
+  assert.match(html, /Paired sales support/);
+  assert.match(html, /Break-even billing rate/);
 
   const sitemap = await worker.fetch(new Request("http://localhost/sitemap.xml"), env, context);
   assert.equal(sitemap.status, 200);

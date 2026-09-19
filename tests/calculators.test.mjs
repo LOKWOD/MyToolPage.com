@@ -107,3 +107,36 @@ test("seller net sheet totals costs and solves the break-even sale price", () =>
   assert.equal(result.sellingCostPercent, 10);
   assert.equal(calculators.calculateSellerNet(100000, 150000, 0, 0, 0, 0, 0, 0).netProceeds, -50000);
 });
+
+test("rental snapshot calculates income-property screening metrics", () => {
+  const result = calculators.calculateRentalSnapshot(300000, 2, 3000, 100, 5, 12000, 18000, 75000);
+  assert.equal(result.grossPotentialIncome, 37200);
+  assert.equal(result.vacancyAllowance, 1860);
+  assert.equal(result.effectiveGrossIncome, 35340);
+  assert.equal(result.netOperatingIncome, 23340);
+  assert.equal(result.annualCashFlow, 5340);
+  assert.ok(Math.abs(result.capRate - 7.78) < .0001);
+  assert.ok(Math.abs(result.grossRentMultiplier - 8.333333333333334) < .0001);
+  assert.ok(Math.abs(result.debtServiceCoverage - 1.2966666666666666) < .0001);
+  assert.ok(Math.abs(result.cashOnCashReturn - 7.12) < .0001);
+  assert.equal(result.monthlyRentPerUnit, 1500);
+  assert.equal(calculators.calculateRentalSnapshot(0, 0, 0, 0, 0, 0, 0, 0).netOperatingIncome, 0);
+});
+
+test("cash runway handles surplus, burn, reserve floors, and horizon limits", () => {
+  const surplus = calculators.calculateCashRunway(50000, 10000, 20000, 12000, 4000, 1000, 5000, 12);
+  assert.equal(surplus.monthlyOutflow, 17000);
+  assert.equal(surplus.monthlyNet, 3000);
+  assert.equal(surplus.usableCash, 35000);
+  assert.equal(surplus.runwayMonths, null);
+  assert.equal(surplus.projectedBalance, 81000);
+  assert.equal(surplus.balances.length, 13);
+
+  const burn = calculators.calculateCashRunway(30000, 5000, 10000, 12000, 2000, 1000, 5000, 6);
+  assert.equal(burn.monthlyNet, -5000);
+  assert.equal(burn.monthlyBurn, 5000);
+  assert.equal(burn.usableCash, 20000);
+  assert.equal(burn.runwayMonths, 4);
+  assert.equal(burn.projectedBalance, -5000);
+  assert.equal(calculators.calculateCashRunway(1e308, 1e308, 1e308, 1e308, 1e308, 1e308, 1e308, 1e308).horizonMonths, 60);
+});

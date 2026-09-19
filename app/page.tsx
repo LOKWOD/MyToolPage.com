@@ -18,10 +18,11 @@ import {
 import {
   calculateFieldDayCapacity, calculateRepairEstimate, calculateTaxProration,
   calculateBreakEvenRate, calculatePairedSales, calculateSellerNet,
+  calculateCashRunway, calculateRentalSnapshot,
   calculateWages, calculateWorkerPay,
 } from "@/lib/calculators";
 
-type ToolId = "clock" | "wages" | "payroll" | "proration" | "netsheet" | "fieldday" | "repairs" | "market" | "gla" | "convert" | "grid" | "paired" | "fee" | "breakeven" | "mileage" | "turnaround" | "quote";
+type ToolId = "clock" | "wages" | "payroll" | "proration" | "netsheet" | "rental" | "fieldday" | "intake" | "repairs" | "market" | "gla" | "convert" | "grid" | "paired" | "fee" | "breakeven" | "runway" | "mileage" | "turnaround" | "quote";
 type TimeRow = { day: string; start: string; end: string; breakMinutes: number };
 type WorkerRow = { id: number; name: string; hours: number; rate: number; extra: number; deduction: number };
 type RepairRow = { id: number; label: string; quantity: number; unitCost: number };
@@ -45,7 +46,9 @@ const TOOLS = [
   { id: "payroll" as const, label: "Worker Payout Sheet", short: "Payouts", icon: Users, description: "Total a daily or multi-day payment batch" },
   { id: "proration" as const, label: "Tax Proration", short: "Proration", icon: CalendarDays, description: "Split annual property taxes at closing" },
   { id: "netsheet" as const, label: "Seller Net Sheet", short: "Seller Net", icon: Home, description: "Estimate sale proceeds and break-even price" },
+  { id: "rental" as const, label: "Rental Property Snapshot", short: "Rental", icon: TableProperties, description: "Screen income, NOI, cap rate, GRM, DSCR, and cash flow" },
   { id: "fieldday" as const, label: "Field Day Planner", short: "Field Day", icon: Route, description: "Test inspection-day capacity and build a stop schedule" },
+  { id: "intake" as const, label: "Property Inspection Intake", short: "Intake", icon: ClipboardList, description: "Print or save an owner-supplied property information sheet" },
   { id: "repairs" as const, label: "Repair Cost Worksheet", short: "Repairs", icon: ClipboardList, description: "Build a repair scope with contingency and cost per square foot" },
   { id: "market" as const, label: "Market Adjustment", short: "Market", icon: TrendingUp, description: "Calculate a supported time adjustment" },
   { id: "gla" as const, label: "GLA Worksheet", short: "GLA", icon: Ruler, description: "Build rectangular areas and total GLA" },
@@ -54,6 +57,7 @@ const TOOLS = [
   { id: "paired" as const, label: "Paired Sales Support", short: "Paired Sales", icon: SlidersHorizontal, description: "Extract and compare unit-adjustment indications" },
   { id: "fee" as const, label: "Assignment Fee IQ", short: "Fee IQ", icon: BadgeDollarSign, description: "Measure assignment profit and quote the right fee" },
   { id: "breakeven" as const, label: "Break-Even Billing Rate", short: "Break-Even", icon: CircleDollarSign, description: "Convert annual costs and targets into a billing floor" },
+  { id: "runway" as const, label: "Cash Reserve Runway", short: "Runway", icon: TrendingUp, description: "Project cash, monthly burn, and time above a reserve floor" },
   { id: "mileage" as const, label: "Trip Cost Calculator", short: "Trip Cost", icon: MapPinned, description: "Price fuel, vehicle wear, tolls, and travel time" },
   { id: "turnaround" as const, label: "Turnaround Planner", short: "Turnaround", icon: CalendarClock, description: "Calculate a delivery date in business days" },
   { id: "quote" as const, label: "Appraisal Fee Builder", short: "Fee Builder", icon: ReceiptText, description: "Build a defensible assignment quote" },
@@ -100,6 +104,14 @@ const DEFAULT_COMPS: GridComp[] = [
 const DEFAULT_RATES: GridRates = {
   gla: 75, siteAcres: 10000, age: 500, beds: 10000,
   baths: 15000, garage: 12000, condition: 25000,
+};
+
+const INSPECTION_DEFAULTS = {
+  address: "", reportedBy: "", contact: "", occupancy: "", units: "",
+  roof: "", windows: "", kitchen: "", baths: "", heating: "", cooling: "",
+  electrical: "", plumbing: "", additions: "", basement: "", attic: "",
+  garageOutbuildings: "", waterSewer: "", siteFeatures: "",
+  recentImprovements: "", knownIssues: "", otherNotes: "",
 };
 
 const money = new Intl.NumberFormat("en-US", {
@@ -205,10 +217,10 @@ function ResultStat({ label, value, tone }: {
   </div>;
 }
 
-function CalculationMethod({ children }: { children: ReactNode }) {
+function CalculationMethod({ children, label = "How this calculator works" }: { children: ReactNode; label?: string }) {
   return <details className="calculation-method">
-    <summary>How this calculator works</summary>
-    <div>{children}<small>Method reviewed September 18, 2026.</small></div>
+    <summary>{label}</summary>
+    <div>{children}<small>Method reviewed September 19, 2026.</small></div>
   </details>;
 }
 
@@ -571,6 +583,62 @@ function SellerNetTool() {
   </section>;
 }
 
+function RentalSnapshotTool() {
+  const defaults = {
+    propertyValue: 0, units: 0, monthlyRent: 0, otherMonthlyIncome: 0,
+    vacancyPercent: 0, annualOperatingExpenses: 0, annualDebtService: 0, cashInvested: 0,
+  };
+  const [values, setValues] = useState(defaults);
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("mtp-rental-snapshot");
+      if (saved) setValues((current) => ({ ...current, ...JSON.parse(saved) }));
+    } catch { /* Storage is optional. */ }
+    setReady(true);
+  }, []);
+  useEffect(() => {
+    if (!ready) return;
+    try { localStorage.setItem("mtp-rental-snapshot", JSON.stringify(values)); }
+    catch { /* Storage is optional. */ }
+  }, [values, ready]);
+  const update = (key: keyof typeof values, value: number) =>
+    setValues((current) => ({ ...current, [key]: value }));
+  const result = calculateRentalSnapshot(
+    values.propertyValue, values.units, values.monthlyRent, values.otherMonthlyIncome,
+    values.vacancyPercent, values.annualOperatingExpenses, values.annualDebtService, values.cashInvested,
+  );
+  return <section className="tool-card wide-card">
+    <div className="tool-heading heading-with-action">
+      <div className="heading-group"><div className="tool-icon orange"><TableProperties size={24} /></div>
+        <div><p className="eyebrow">Income-property screen</p><h1>Rental Property Snapshot</h1></div></div>
+      <button type="button" className="quiet-button" onClick={() => setValues(defaults)}><RefreshCcw size={16} />Clear</button>
+    </div>
+    <div className="market-grid">
+      <NumberField label="Property value / price" value={values.propertyValue} onChange={(value) => update("propertyValue", value)} prefix="$" min={0} step="1000" />
+      <NumberField label="Rental units" value={values.units} onChange={(value) => update("units", value)} suffix="units" min={0} step="1" />
+      <NumberField label="Total monthly rent" value={values.monthlyRent} onChange={(value) => update("monthlyRent", value)} prefix="$" min={0} step="100" />
+      <NumberField label="Other monthly income" value={values.otherMonthlyIncome} onChange={(value) => update("otherMonthlyIncome", value)} prefix="$" min={0} step="25" />
+      <NumberField label="Vacancy / collection allowance" value={values.vacancyPercent} onChange={(value) => update("vacancyPercent", value)} suffix="%" min={0} step=".5" />
+      <NumberField label="Annual operating expenses" value={values.annualOperatingExpenses} onChange={(value) => update("annualOperatingExpenses", value)} prefix="$" min={0} step="500" />
+      <NumberField label="Annual debt service" value={values.annualDebtService} onChange={(value) => update("annualDebtService", value)} prefix="$" min={0} step="500" />
+      <NumberField label="Cash invested" value={values.cashInvested} onChange={(value) => update("cashInvested", value)} prefix="$" min={0} step="1000" />
+    </div>
+    <div className="result-row four-results" aria-live="polite">
+      <ResultStat label="Effective gross income" value={money.format(result.effectiveGrossIncome)} />
+      <ResultStat label="Net operating income" value={money.format(result.netOperatingIncome)} tone="blue" />
+      <ResultStat label="Annual cash flow" value={money.format(result.annualCashFlow)} tone={result.annualCashFlow >= 0 ? "blue" : "orange"} />
+      <ResultStat label="Cap rate" value={`${result.capRate.toFixed(2)}%`} />
+      <ResultStat label="Annual GRM" value={result.grossRentMultiplier.toFixed(2)} />
+      <ResultStat label="Debt-service coverage" value={`${result.debtServiceCoverage.toFixed(2)}×`} />
+      <ResultStat label="Cash-on-cash return" value={`${result.cashOnCashReturn.toFixed(2)}%`} />
+      <ResultStat label="Monthly rent per unit" value={money.format(result.monthlyRentPerUnit)} />
+    </div>
+    <CalculationMethod><p><strong>NOI</strong> = annual rent and other income − vacancy allowance − operating expenses, before debt service and income taxes. Cap rate = NOI ÷ property value. Annual GRM = property value ÷ annual scheduled rent. DSCR = NOI ÷ debt service. Cash-on-cash return = annual cash flow ÷ cash invested.</p></CalculationMethod>
+    <p className="professional-note"><Home size={16} />Screening aid only—not an appraisal, investment recommendation, loan decision, tax estimate, or substitute for a verified rent roll. Confirm lease terms, concessions, vacancy, reserves, utilities, management, maintenance, capital items, financing, and local requirements.</p>
+  </section>;
+}
+
 function FieldDayTool() {
   const defaults = {
     startTime: "09:00", workdayHours: 8.5, stops: 10,
@@ -666,6 +734,84 @@ function FieldDayTool() {
     {capacity.stops > 50 && <p className="settings-note">Capacity math includes all {capacity.stops} stops; the schedule preview shows the first 50.</p>}
     <CalculationMethod><p><strong>Total route time</strong> = stops × inspection minutes + drives between stops + break + end-of-day buffer. Maximum stops uses the same assumptions inside the workday limit. The break is placed after the middle stop in the preview; the buffer is included in the finish time.</p></CalculationMethod>
     <p className="professional-note"><Route size={16} />Planning aid only. It does not optimize addresses, predict traffic, reserve appointment windows, or include report-writing time unless you add it to the buffer.</p>
+  </section>;
+}
+
+function InspectionIntakeTool() {
+  const [values, setValues] = useState(INSPECTION_DEFAULTS);
+  const [ready, setReady] = useState(false);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("mtp-inspection-intake");
+      if (saved) setValues((current) => ({ ...current, ...JSON.parse(saved) }));
+    } catch { /* Storage is optional. */ }
+    setReady(true);
+  }, []);
+  useEffect(() => {
+    if (!ready) return;
+    try { localStorage.setItem("mtp-inspection-intake", JSON.stringify(values)); }
+    catch { /* Storage is optional. */ }
+  }, [values, ready]);
+  const update = (key: keyof typeof values, value: string) =>
+    setValues((current) => ({ ...current, [key]: value }));
+  const copySummary = async () => {
+    const fields: Array<[string, string]> = [
+      ["Property", values.address], ["Reported by", values.reportedBy], ["Contact", values.contact],
+      ["Occupancy", values.occupancy], ["Units", values.units], ["Roof", values.roof],
+      ["Windows / exterior", values.windows], ["Kitchen", values.kitchen], ["Bathrooms", values.baths],
+      ["Heating", values.heating], ["Cooling", values.cooling], ["Electrical", values.electrical],
+      ["Plumbing", values.plumbing], ["Additions / conversions", values.additions],
+      ["Basement", values.basement], ["Attic", values.attic], ["Garage / outbuildings", values.garageOutbuildings],
+      ["Water / sewer", values.waterSewer], ["Site features", values.siteFeatures],
+      ["Recent improvements", values.recentImprovements], ["Known issues", values.knownIssues], ["Other notes", values.otherNotes],
+    ];
+    const completed = fields.filter(([, value]) => value.trim()).map(([label, value]) => `${label}: ${value.trim()}`);
+    const text = `Owner/occupant property information${completed.length ? `\n${completed.join("\n")}` : "\nNo responses entered."}\n\nOwner/occupant supplied; independently verify before relying on it.`;
+    try { await navigator.clipboard.writeText(text); setCopied(true); window.setTimeout(() => setCopied(false), 1800); }
+    catch { setCopied(false); }
+  };
+  const textField = (label: string, key: keyof typeof values, wide = false) =>
+    <label className={`intake-field ${wide ? "intake-wide" : ""}`} key={key}><span>{label}</span>
+      <input value={values[key]} onChange={(event) => update(key, event.target.value)} /></label>;
+  const textArea = (label: string, key: keyof typeof values) =>
+    <label className="intake-field intake-wide" key={key}><span>{label}</span>
+      <textarea rows={3} value={values[key]} onChange={(event) => update(key, event.target.value)} /></label>;
+  return <section className="tool-card wide-card intake-tool">
+    <div className="tool-heading heading-with-action">
+      <div className="heading-group"><div className="tool-icon blue"><ClipboardList size={24} /></div>
+        <div><p className="eyebrow">Field-work handoff</p><h1>Property Inspection Intake</h1></div></div>
+      <div className="heading-actions">
+        <button type="button" className="quiet-button" onClick={() => setValues(INSPECTION_DEFAULTS)}><RefreshCcw size={16} />Clear</button>
+        <button type="button" className="quiet-button" onClick={copySummary}><Copy size={16} />{copied ? "Copied" : "Copy summary"}</button>
+        <button type="button" className="secondary-button" onClick={() => window.print()}><ReceiptText size={17} />Print sheet</button>
+      </div>
+    </div>
+    <p className="intake-intro">Hand this sheet to the owner or occupant while the exterior is being measured. Print it blank or prefill known details. Entries stay on this device.</p>
+    <div className="intake-section"><h2>Property and contact</h2><div className="intake-grid">
+      {textField("Property address", "address", true)}
+      {textField("Reported by", "reportedBy")}{textField("Best phone or email", "contact")}
+      <label className="intake-field"><span>Current occupancy</span><select value={values.occupancy} onChange={(event) => update("occupancy", event.target.value)}><option value="">Select or leave blank</option><option>Owner occupied</option><option>Tenant occupied</option><option>Vacant</option><option>Seasonal / occasional</option><option>Other</option></select></label>
+      {textField("Number of living units", "units")}
+    </div></div>
+    <div className="intake-section"><h2>Reported updates and systems</h2><div className="intake-grid">
+      {textField("Roof — year and details", "roof")}{textField("Windows / exterior — year and details", "windows")}
+      {textField("Kitchen — year and details", "kitchen")}{textField("Bathrooms — year and details", "baths")}
+      {textField("Heating — type, fuel, age", "heating")}{textField("Cooling — type and age", "cooling")}
+      {textField("Electrical — service / updates", "electrical")}{textField("Plumbing — material / updates", "plumbing")}
+    </div></div>
+    <div className="intake-section"><h2>Additional areas and site</h2><div className="intake-grid">
+      {textField("Additions or conversions — year / permits", "additions")}{textField("Basement — finished rooms / approximate area", "basement")}
+      {textField("Attic — access / finished rooms", "attic")}{textField("Garage and outbuildings", "garageOutbuildings")}
+      {textField("Water and sewer", "waterSewer")}{textField("Site features — pool, solar, fencing, etc.", "siteFeatures")}
+    </div></div>
+    <div className="intake-section"><h2>History and comments</h2><div className="intake-grid">
+      {textArea("Recent improvements or major replacements", "recentImprovements")}
+      {textArea("Known damage, deferred maintenance, or items not working", "knownIssues")}
+      {textArea("Other information the appraiser should know", "otherNotes")}
+    </div></div>
+    <CalculationMethod label="How to use this intake sheet"><p>Use the responses as interview notes and a prompt for follow-up questions. Record who supplied the information, retain any supporting documents separately, and distinguish reported facts from the appraiser’s observations and verified data.</p></CalculationMethod>
+    <p className="professional-note"><Hammer size={16} />Owner/occupant-supplied information is not independently verified and is not a property inspection, seller disclosure, permit search, measurement, or appraisal conclusion. Verify material facts through appropriate sources before relying on them.</p>
   </section>;
 }
 
@@ -1105,6 +1251,62 @@ function BreakEvenTool() {
   </section>;
 }
 
+function CashRunwayTool() {
+  const defaults = {
+    openingCash: 0, reserveFloor: 0, monthlyRevenue: 0, monthlyFixedCosts: 0,
+    monthlyVariableCosts: 0, monthlyDebtAndTax: 0, oneTimeCost: 0, horizonMonths: 12,
+  };
+  const [values, setValues] = useState(defaults);
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("mtp-cash-runway");
+      if (saved) setValues((current) => ({ ...current, ...JSON.parse(saved) }));
+    } catch { /* Storage is optional. */ }
+    setReady(true);
+  }, []);
+  useEffect(() => {
+    if (!ready) return;
+    try { localStorage.setItem("mtp-cash-runway", JSON.stringify(values)); }
+    catch { /* Storage is optional. */ }
+  }, [values, ready]);
+  const update = (key: keyof typeof values, value: number) =>
+    setValues((current) => ({ ...current, [key]: value }));
+  const result = calculateCashRunway(
+    values.openingCash, values.reserveFloor, values.monthlyRevenue, values.monthlyFixedCosts,
+    values.monthlyVariableCosts, values.monthlyDebtAndTax, values.oneTimeCost, values.horizonMonths,
+  );
+  return <section className="tool-card wide-card">
+    <div className="tool-heading heading-with-action">
+      <div className="heading-group"><div className="tool-icon orange"><TrendingUp size={24} /></div>
+        <div><p className="eyebrow">Business liquidity</p><h1>Cash Reserve Runway</h1></div></div>
+      <button type="button" className="quiet-button" onClick={() => setValues(defaults)}><RefreshCcw size={16} />Clear</button>
+    </div>
+    <div className="market-grid">
+      <NumberField label="Cash available now" value={values.openingCash} onChange={(value) => update("openingCash", value)} prefix="$" min={0} step="1000" />
+      <NumberField label="Cash reserve floor" value={values.reserveFloor} onChange={(value) => update("reserveFloor", value)} prefix="$" min={0} step="1000" />
+      <NumberField label="Average monthly revenue" value={values.monthlyRevenue} onChange={(value) => update("monthlyRevenue", value)} prefix="$" min={0} step="500" />
+      <NumberField label="Monthly fixed costs" value={values.monthlyFixedCosts} onChange={(value) => update("monthlyFixedCosts", value)} prefix="$" min={0} step="500" />
+      <NumberField label="Monthly variable costs" value={values.monthlyVariableCosts} onChange={(value) => update("monthlyVariableCosts", value)} prefix="$" min={0} step="500" />
+      <NumberField label="Monthly debt and tax set-aside" value={values.monthlyDebtAndTax} onChange={(value) => update("monthlyDebtAndTax", value)} prefix="$" min={0} step="500" />
+      <NumberField label="Known one-time cost" value={values.oneTimeCost} onChange={(value) => update("oneTimeCost", value)} prefix="$" min={0} step="500" />
+      <NumberField label="Projection horizon" value={values.horizonMonths} onChange={(value) => update("horizonMonths", value)} suffix="months" min={0} step="1" />
+    </div>
+    <div className="result-row four-results" aria-live="polite">
+      <ResultStat label="Monthly surplus / burn" value={signedMoney(result.monthlyNet)} tone={result.monthlyNet >= 0 ? "blue" : "orange"} />
+      <ResultStat label="Cash available above reserve" value={money.format(result.usableCash)} />
+      <ResultStat label="Runway above reserve" value={result.runwayMonths === null ? "No monthly burn" : `${result.runwayMonths.toFixed(1)} months`} tone="orange" />
+      <ResultStat label={`Balance after ${result.horizonMonths} months`} value={money.format(result.projectedBalance)} tone={result.projectedBalance >= 0 ? "blue" : "orange"} />
+    </div>
+    <div className="runway-table-wrap"><table className="runway-table">
+      <thead><tr><th>Month</th><th>Projected balance</th><th>Reserve status</th></tr></thead>
+      <tbody>{result.balances.map((row) => <tr key={row.month}><th>{row.month === 0 ? "After one-time cost" : `Month ${row.month}`}</th><td>{money.format(row.balance)}</td><td className={row.balance >= safeNonNegative(values.reserveFloor) ? "runway-ok" : "runway-below"}>{row.balance >= safeNonNegative(values.reserveFloor) ? "Above reserve" : "Below reserve"}</td></tr>)}</tbody>
+    </table></div>
+    <CalculationMethod><p><strong>Monthly net</strong> = revenue − fixed costs − variable costs − debt/tax set-aside. Usable cash subtracts the reserve floor and known one-time cost from opening cash. When monthly net is negative, runway = usable cash ÷ monthly burn. The table applies the one-time cost immediately and repeats the same monthly averages.</p></CalculationMethod>
+    <p className="professional-note"><CircleDollarSign size={16} />Planning scenario only—not cash-flow forecasting, accounting, tax, credit, or insolvency advice. Actual collections and expenses vary; test a conservative case and confirm obligations with your records and advisers.</p>
+  </section>;
+}
+
 function MileageTool() {
   const [miles, setMiles] = useState(120), [mpg, setMpg] = useState(19), [gas, setGas] = useState(3.65), [wear, setWear] = useState(.35), [tolls, setTolls] = useState(8), [hours, setHours] = useState(3), [hourly, setHourly] = useState(75);
   const fuel = mpg > 0 ? miles / mpg * gas : 0;
@@ -1191,7 +1393,9 @@ export default function HomePage() {
         {activeTool === "payroll" && <PayrollTool />}
         {activeTool === "proration" && <TaxProrationTool />}
         {activeTool === "netsheet" && <SellerNetTool />}
+        {activeTool === "rental" && <RentalSnapshotTool />}
         {activeTool === "fieldday" && <FieldDayTool />}
+        {activeTool === "intake" && <InspectionIntakeTool />}
         {activeTool === "repairs" && <RepairCostTool />}
         {activeTool === "market" && <MarketTool />}
         {activeTool === "gla" && <GlaTool />}
@@ -1200,10 +1404,11 @@ export default function HomePage() {
         {activeTool === "paired" && <PairedSalesTool />}
         {activeTool === "fee" && <FeeIqTool />}
         {activeTool === "breakeven" && <BreakEvenTool />}
+        {activeTool === "runway" && <CashRunwayTool />}
         {activeTool === "mileage" && <MileageTool />}
         {activeTool === "turnaround" && <TurnaroundTool />}
         {activeTool === "quote" && <QuoteTool />}
-        <footer className="site-footer"><span>MyToolPage v0.6.0 · 17 tools</span><span>Practical tools for real work.</span></footer>
+        <footer className="site-footer"><span>MyToolPage v0.7.0 · 20 tools</span><span>Practical tools for real work.</span></footer>
       </div>
     </div>
   </main>;

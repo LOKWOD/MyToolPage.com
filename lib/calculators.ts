@@ -11,6 +11,9 @@ const boundedNonNegative = (value: number) => Math.min(Number.MAX_SAFE_INTEGER, 
 const boundedResult = (value: number) => Number.isFinite(value)
   ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, value))
   : Number.MAX_SAFE_INTEGER;
+const boundedSigned = (value: number) => Number.isFinite(value)
+  ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(-Number.MAX_SAFE_INTEGER, value))
+  : value < 0 ? -Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER;
 
 export function calculateWages(
   hours: number[],
@@ -212,5 +215,83 @@ export function calculateSellerNet(
     netProceeds,
     breakEvenPrice,
     sellingCostPercent: price > 0 ? sellingCosts / price * 100 : 0,
+  };
+}
+
+export function calculateRentalSnapshot(
+  propertyValue: number,
+  units: number,
+  monthlyRent: number,
+  otherMonthlyIncome: number,
+  vacancyPercent: number,
+  annualOperatingExpenses: number,
+  annualDebtService: number,
+  cashInvested: number,
+) {
+  const value = boundedNonNegative(propertyValue);
+  const unitCount = Math.floor(boundedNonNegative(units));
+  const rent = boundedNonNegative(monthlyRent);
+  const otherIncome = boundedNonNegative(otherMonthlyIncome);
+  const vacancyRate = Math.min(100, boundedNonNegative(vacancyPercent)) / 100;
+  const expenses = boundedNonNegative(annualOperatingExpenses);
+  const debtService = boundedNonNegative(annualDebtService);
+  const invested = boundedNonNegative(cashInvested);
+  const grossPotentialIncome = boundedResult((rent + otherIncome) * 12);
+  const vacancyAllowance = boundedResult(grossPotentialIncome * vacancyRate);
+  const effectiveGrossIncome = boundedResult(grossPotentialIncome - vacancyAllowance);
+  const netOperatingIncome = boundedSigned(effectiveGrossIncome - expenses);
+  const annualCashFlow = boundedSigned(netOperatingIncome - debtService);
+  return {
+    grossPotentialIncome,
+    vacancyAllowance,
+    effectiveGrossIncome,
+    netOperatingIncome,
+    annualCashFlow,
+    capRate: value > 0 ? netOperatingIncome / value * 100 : 0,
+    grossRentMultiplier: rent > 0 ? value / (rent * 12) : 0,
+    debtServiceCoverage: debtService > 0 ? netOperatingIncome / debtService : 0,
+    cashOnCashReturn: invested > 0 ? annualCashFlow / invested * 100 : 0,
+    monthlyRentPerUnit: unitCount > 0 ? rent / unitCount : 0,
+  };
+}
+
+export function calculateCashRunway(
+  openingCash: number,
+  reserveFloor: number,
+  monthlyRevenue: number,
+  monthlyFixedCosts: number,
+  monthlyVariableCosts: number,
+  monthlyDebtAndTax: number,
+  oneTimeCost: number,
+  requestedHorizonMonths: number,
+) {
+  const opening = boundedNonNegative(openingCash);
+  const reserve = boundedNonNegative(reserveFloor);
+  const revenue = boundedNonNegative(monthlyRevenue);
+  const fixed = boundedNonNegative(monthlyFixedCosts);
+  const variable = boundedNonNegative(monthlyVariableCosts);
+  const debtAndTax = boundedNonNegative(monthlyDebtAndTax);
+  const oneTime = boundedNonNegative(oneTimeCost);
+  const horizonMonths = Math.min(60, Math.floor(boundedNonNegative(requestedHorizonMonths)));
+  const monthlyOutflow = boundedResult(fixed + variable + debtAndTax);
+  const monthlyNet = boundedSigned(revenue - monthlyOutflow);
+  const monthlyBurn = Math.max(0, -monthlyNet);
+  const usableCash = Math.max(0, boundedSigned(opening - reserve - oneTime));
+  const runwayMonths = monthlyBurn > 0 ? usableCash / monthlyBurn : null;
+  const projectedBalance = boundedSigned(opening - oneTime + monthlyNet * horizonMonths);
+  const balances = Array.from({ length: horizonMonths + 1 }, (_, month) => ({
+    month,
+    balance: boundedSigned(opening - oneTime + monthlyNet * month),
+  }));
+  return {
+    monthlyOutflow,
+    monthlyNet,
+    monthlyBurn,
+    usableCash,
+    runwayMonths,
+    projectedBalance,
+    breakEvenRevenue: monthlyOutflow,
+    balances,
+    horizonMonths,
   };
 }

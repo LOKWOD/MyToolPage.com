@@ -45,10 +45,15 @@ test("publishes canonical discovery metadata, sitemap, and robots rules", async 
   assert.match(html, /Field day planner/);
   assert.match(html, /Paired sales support/);
   assert.match(html, /Break-even billing rate/);
+  assert.match(html, /Rental property snapshot/);
+  assert.match(html, /Property inspection intake sheet/);
+  assert.match(html, /Cash reserve runway/);
 
   const sitemap = await worker.fetch(new Request("http://localhost/sitemap.xml"), env, context);
   assert.equal(sitemap.status, 200);
-  assert.match(await sitemap.text(), /https:\/\/mytoolpage\.com\//);
+  const sitemapText = await sitemap.text();
+  assert.match(sitemapText, /https:\/\/mytoolpage\.com\//);
+  assert.match(sitemapText, /2026-09-19/);
 
   const robots = await worker.fetch(new Request("http://localhost/robots.txt"), env, context);
   assert.equal(robots.status, 200);
